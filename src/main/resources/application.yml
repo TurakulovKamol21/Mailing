@@ -1,0 +1,37 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: ${AUTH_FEIGN_CONNECT_TIMEOUT_MS:3000}
+            read-timeout: ${AUTH_FEIGN_READ_TIMEOUT_MS:3000}
+
+server:
+  port: ${SERVER_PORT:8000}
+
+mail:
+  imap-host: ${MAIL_IMAP_HOST:}
+  imap-port: ${MAIL_IMAP_PORT:993}
+  imap-ssl: ${MAIL_IMAP_SSL:true}
+  smtp-host: ${MAIL_SMTP_HOST:}
+  smtp-port: ${MAIL_SMTP_PORT:587}
+  smtp-starttls: ${MAIL_SMTP_STARTTLS:true}
+  smtp-ssl: ${MAIL_SMTP_SSL:false}
+  default-folder: ${MAIL_DEFAULT_FOLDER:INBOX}
+  timeout-seconds: ${MAIL_TIMEOUT_SECONDS:30}
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:replace-this-with-a-strong-32-plus-char-secret-key}
+    access-token-minutes: ${JWT_ACCESS_TOKEN_MINUTES:30}
+    refresh-token-days: ${JWT_REFRESH_TOKEN_DAYS:7}
+  auth:
+    roles: ${APP_AUTH_ROLES:USER}
+    session-ttl-minutes: ${APP_AUTH_SESSION_TTL_MINUTES:60}
+    session-check-enabled: ${APP_AUTH_SESSION_CHECK_ENABLED:false}
+    service-url: ${APP_AUTH_SERVICE_URL:http://192.168.1.96:8081}
+  frontend:
+    origins: ${FRONTEND_ORIGINS:http://localhost:5173}

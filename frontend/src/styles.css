@@ -1,0 +1,612 @@
+:root {
+    --bg: #f6f8fc;
+    --surface: #ffffff;
+    --surface-soft: #f1f5fb;
+    --line: #d7deea;
+    --text: #1f2937;
+    --muted: #5f6b7e;
+    --blue: #1a73e8;
+    --blue-soft: #d3e3fd;
+    --danger: #d93025;
+    --success: #0b8043;
+    --shadow: 0 12px 28px rgba(31, 41, 55, 0.08);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Lexend", "Segoe UI", sans-serif;
+}
+
+.gmail-shell {
+    width: min(1500px, calc(100vw - 24px));
+    margin: 12px auto 20px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.global-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: grid;
+    place-items: center;
+    background: rgba(247, 250, 255, 0.75);
+    backdrop-filter: blur(2px);
+}
+
+.loader-box {
+    display: grid;
+    justify-items: center;
+    gap: 12px;
+    min-width: 240px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 18px;
+}
+
+.loader-box p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+}
+
+.spinner {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 3px solid #d7e3f8;
+    border-top-color: var(--blue);
+    animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.login-panel {
+    width: min(420px, 100%);
+    margin: 9vh auto 0;
+    padding: 26px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.login-panel h1 {
+    margin: 0;
+}
+
+.stack {
+    display: grid;
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.field {
+    display: grid;
+    gap: 7px;
+}
+
+.field span {
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+input,
+textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--text);
+    padding: 10px 12px;
+    outline: none;
+    font-family: "IBM Plex Mono", monospace;
+}
+
+input:focus,
+textarea:focus {
+    border-color: var(--blue);
+    box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.16);
+}
+
+.app {
+    display: grid;
+    gap: 10px;
+}
+
+.topbar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 10px 6px;
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 210px;
+}
+
+.brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(140deg, #ea4335, #fbbc05 42%, #34a853 70%, #4285f4);
+    color: #fff;
+    font-weight: 700;
+}
+
+.brand-text {
+    font-size: 1.02rem;
+    font-weight: 600;
+}
+
+.search-wrap {
+    border: 1px solid #dbe4f3;
+    background: #eaf1fb;
+    border-radius: 999px;
+    min-height: 50px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    padding: 0 16px;
+    gap: 10px;
+}
+
+.search-icon {
+    color: var(--muted);
+    font-size: 0.85rem;
+    user-select: none;
+}
+
+.search-wrap input {
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    font-family: "Lexend", "Segoe UI", sans-serif;
+    font-size: 0.95rem;
+    padding: 0;
+}
+
+.search-wrap input:focus {
+    border: 0;
+    box-shadow: none;
+}
+
+.top-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.workspace {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 250px minmax(0, 1fr);
+}
+
+.sidebar {
+    padding-top: 6px;
+}
+
+.compose-btn {
+    width: 150px;
+    border-radius: 18px;
+    padding: 13px 18px;
+    font-weight: 600;
+    background: var(--blue-soft);
+    color: #0b3d91;
+    border: 1px solid #bfd5fb;
+}
+
+.side-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin: 18px 0 10px;
+}
+
+.side-header h3 {
+    margin: 0;
+    font-size: 0.96rem;
+}
+
+.folder-list {
+    display: grid;
+    gap: 2px;
+}
+
+.folder-item {
+    width: 100%;
+    text-align: left;
+    border: 0;
+    border-radius: 0 999px 999px 0;
+    padding: 9px 12px;
+    background: transparent;
+    color: #344258;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.93rem;
+}
+
+.folder-item:hover {
+    background: #e9eef6;
+}
+
+.folder-item.active {
+    background: var(--blue-soft);
+    color: #123c8f;
+    font-weight: 600;
+}
+
+.folder-item .folder-icon {
+    width: 22px;
+    text-align: center;
+}
+
+.session-box {
+    margin-top: 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+    padding: 10px;
+}
+
+.content {
+    display: grid;
+    gap: 10px;
+}
+
+.mail-list-card,
+.detail-card {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+}
+
+.mail-list-card {
+    overflow: hidden;
+}
+
+.list-toolbar {
+    min-height: 54px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--surface-soft);
+}
+
+.message-list {
+    max-height: 470px;
+    overflow: auto;
+}
+
+.message-item {
+    display: grid;
+    grid-template-columns: 26px minmax(170px, 240px) minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    border-bottom: 1px solid #e4eaf4;
+    padding: 11px 14px;
+    cursor: pointer;
+    transition: background 0.16s ease;
+}
+
+.message-item:hover {
+    background: #f6f9ff;
+}
+
+.message-item.active {
+    background: #eaf2ff;
+}
+
+.message-item.unread {
+    font-weight: 600;
+}
+
+.row-badge {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid #9cb0d0;
+    justify-self: center;
+}
+
+.message-item.unread .row-badge {
+    border-color: var(--blue);
+    background: var(--blue);
+}
+
+.row-from {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #223249;
+    font-size: 0.92rem;
+}
+
+.row-content {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: #2f3a4f;
+    font-size: 0.92rem;
+}
+
+.row-content .snippet {
+    color: var(--muted);
+}
+
+.row-date {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-family: "IBM Plex Mono", monospace;
+}
+
+.detail-card {
+    padding: 14px;
+    min-height: calc(100vh - 180px);
+}
+
+.detail-empty {
+    margin-top: 8px;
+    border: 1px dashed var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    color: var(--muted);
+    background: #fbfcff;
+}
+
+.detail {
+    display: grid;
+    gap: 10px;
+}
+
+.detail h4 {
+    margin: 0;
+}
+
+.detail-block {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px;
+    background: #fbfcff;
+}
+
+.detail-block pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.84rem;
+}
+
+.mail-body-host {
+    margin-top: 8px;
+}
+
+.mail-body-frame {
+    width: 100%;
+    min-height: 420px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+}
+
+.mail-body-pre {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.attachment-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: #fff;
+}
+
+.attachment-name {
+    word-break: break-word;
+}
+
+.attachment-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.compose {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: min(620px, calc(100vw - 24px));
+    z-index: 90;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 20px 46px rgba(31, 41, 55, 0.22);
+    padding: 14px;
+}
+
+.compose-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.btn {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 9px 13px;
+    cursor: pointer;
+    transition: transform 0.14s ease, opacity 0.14s ease, background 0.14s ease;
+    font-weight: 600;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+.btn:disabled {
+    opacity: 0.48;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn.primary {
+    background: var(--blue);
+    color: #fff;
+}
+
+.btn.ghost {
+    background: #fff;
+    color: #314156;
+    border-color: var(--line);
+}
+
+.btn.tiny {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+}
+
+.btn.danger {
+    background: #fde8e7;
+    color: var(--danger);
+    border-color: #f9c4c1;
+}
+
+.row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.row.between {
+    justify-content: space-between;
+}
+
+.row.end {
+    justify-content: flex-end;
+}
+
+.switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #445267;
+    font-size: 0.86rem;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.mono {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem;
+}
+
+.toast {
+    position: fixed;
+    right: 22px;
+    top: 22px;
+    max-width: 360px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: #fff;
+    box-shadow: var(--shadow);
+    z-index: 100;
+}
+
+.toast.success {
+    border-color: #abdfc4;
+    color: var(--success);
+}
+
+.toast.error {
+    border-color: #f4b7b2;
+    color: var(--danger);
+}
+
+@media (max-width: 1100px) {
+    .workspace {
+        grid-template-columns: 1fr;
+    }
+    .sidebar {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: var(--shadow);
+        padding: 12px;
+    }
+    .folder-item {
+        border-radius: 999px;
+    }
+}
+
+@media (max-width: 780px) {
+    .gmail-shell {
+        width: calc(100vw - 12px);
+        margin: 6px auto 12px;
+    }
+    .topbar {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 8px 2px;
+    }
+    .top-actions {
+        justify-content: flex-start;
+    }
+    .message-item {
+        grid-template-columns: 18px 1fr;
+        gap: 8px;
+        align-items: start;
+    }
+    .row-from,
+    .row-content,
+    .row-date {
+        grid-column: 2 / -1;
+    }
+}

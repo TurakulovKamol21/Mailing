@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mailing Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="/assets/index-D8LZRPEo.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-C7mPnyqv.css">
+</head>
+<body>
+<div id="globalLoader" class="global-loader hidden" aria-live="polite" aria-busy="true">
+    <div class="loader-box">
+        <div class="spinner"></div>
+        <p>Loading, please wait...</p>
+    </div>
+</div>
+
+<main class="gmail-shell">
+    <section id="loginView" class="login-panel">
+        <h1>Mail Console</h1>
+        <p class="muted">Sign in to continue.</p>
+        <form id="loginForm" class="stack">
+            <label class="field">
+                <span>Email</span>
+                <input id="loginUsername" type="email" required autocomplete="username" placeholder="support@domain.com">
+            </label>
+            <label class="field">
+                <span>Password</span>
+                <input id="loginPassword" type="password" required autocomplete="current-password">
+            </label>
+            <button class="btn primary" type="submit">Sign In</button>
+        </form>
+    </section>
+
+    <section id="appView" class="app hidden">
+        <header class="topbar">
+            <div class="brand">
+                <span class="brand-mark">M</span>
+                <span class="brand-text">Mail Console</span>
+            </div>
+            <label class="search-wrap" for="searchInput">
+                <span class="search-icon">Search</span>
+                <input id="searchInput" type="search" placeholder="Search mail in current page...">
+            </label>
+            <div class="top-actions">
+                <button id="btnTestConnection" class="btn ghost tiny">Connection</button>
+                <button id="btnRefreshToken" class="btn ghost tiny">Refresh Token</button>
+                <button id="btnLogout" class="btn danger tiny">Logout</button>
+            </div>
+        </header>
+
+        <section class="workspace">
+            <aside class="sidebar">
+                <button id="btnComposeOpen" class="btn compose-btn">Compose</button>
+
+                <div class="side-header">
+                    <h3>Folders</h3>
+                    <button id="btnReloadFolders" class="btn tiny ghost">Reload</button>
+                </div>
+                <div id="folders" class="folder-list"></div>
+
+                <div class="session-box">
+                    <p id="sessionMeta" class="muted mono">Session: not loaded</p>
+                </div>
+            </aside>
+
+            <section class="content">
+                <div id="mailListCard" class="mail-list-card">
+                    <div class="list-toolbar">
+                        <label class="switch">
+                            <input id="unseenOnly" type="checkbox">
+                            <span>Unread only</span>
+                        </label>
+                        <div class="row">
+                            <span id="messageMeta" class="muted mono">0 items</span>
+                            <button id="btnPrevPage" class="btn tiny ghost">Prev</button>
+                            <button id="btnNextPage" class="btn tiny ghost">Next</button>
+                        </div>
+                    </div>
+                    <div id="messages" class="message-list"></div>
+                </div>
+
+                <div id="detailCard" class="detail-card hidden">
+                    <div class="row between">
+                        <div class="row">
+                            <button id="btnBackToList" class="btn tiny ghost">Back to list</button>
+                            <h3>Message Detail</h3>
+                        </div>
+                        <div class="row">
+                            <button id="btnMarkRead" class="btn tiny ghost" disabled>Mark Read</button>
+                            <button id="btnMarkUnread" class="btn tiny ghost" disabled>Mark Unread</button>
+                            <button id="btnReply" class="btn tiny ghost" disabled>Reply</button>
+                            <button id="btnMove" class="btn tiny ghost" disabled>Move</button>
+                            <button id="btnDelete" class="btn tiny danger" disabled>Delete</button>
+                        </div>
+                    </div>
+                    <div id="detail" class="detail-empty">
+                        Select a message to read.
+                    </div>
+                </div>
+            </section>
+        </section>
+
+        <section id="composePanel" class="compose hidden">
+            <div class="row between">
+                <h3>New Message</h3>
+                <button id="btnComposeClose" class="btn tiny ghost">Close</button>
+            </div>
+            <p id="composeModeMeta" class="muted mono hidden"></p>
+            <form id="composeForm" class="compose-grid">
+                <label class="field"><span>To (comma separated)</span><input id="toInput" required></label>
+                <label class="field"><span>Subject</span><input id="subjectInput"></label>
+                <label class="field"><span>Message</span><textarea id="textBodyInput" rows="8"></textarea></label>
+                <label class="field"><span>Attachments</span><input id="attachmentsInput" type="file" multiple></label>
+                <div class="row end">
+                    <button class="btn primary" type="submit">Send</button>
+                </div>
+            </form>
+        </section>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+</main>
+
+</body>
+</html>
