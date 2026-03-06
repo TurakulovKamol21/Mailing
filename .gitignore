@@ -1,0 +1,36 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Java / Maven
+target/
+*.log
+hs_err_pid*
+replay_pid*
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+!frontend/.env.example
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Frontend build/cache
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Misc
+*.swp
+*.swo
+*.tmp

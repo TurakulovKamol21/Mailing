@@ -38,19 +38,6 @@ cp .env.example .env
 - `AUTH_FEIGN_CONNECT_TIMEOUT_MS`, `AUTH_FEIGN_READ_TIMEOUT_MS`
 - `FRONTEND_ORIGINS` (masalan: `http://localhost:5173`)
 
-`turon-analitics.uz` uchun tavsiya etilgan SSL/TLS konfiguratsiya:
-
-```env
-MAIL_IMAP_HOST=mail.turon-analitics.uz
-MAIL_IMAP_PORT=993
-MAIL_IMAP_SSL=true
-
-MAIL_SMTP_HOST=mail.turon-analitics.uz
-MAIL_SMTP_PORT=465
-MAIL_SMTP_STARTTLS=false
-MAIL_SMTP_SSL=true
-```
-
 ## 3) Backend ishga tushirish
 
 ```bash
