@@ -1,20 +1,21 @@
 package com.company.mailing.controller;
 
-import com.company.mailing.dto.ConnectMailboxRequest;
 import com.company.mailing.dto.DeleteStatusResponse;
 import com.company.mailing.dto.MarkReadRequest;
+import com.company.mailing.dto.MailSettingsRequest;
+import com.company.mailing.dto.MailSettingsResponse;
 import com.company.mailing.dto.MessageDetailResponse;
 import com.company.mailing.dto.MessageListResponse;
+import com.company.mailing.dto.MessageThreadResponse;
 import com.company.mailing.dto.MoveMessageRequest;
 import com.company.mailing.dto.MoveStatusResponse;
 import com.company.mailing.dto.ReadStatusResponse;
 import com.company.mailing.dto.SendMessageRequest;
 import com.company.mailing.dto.SendMessageResponse;
-import com.company.mailing.exception.MailServiceException;
+import com.company.mailing.config.MailConnectionSettings;
 import com.company.mailing.security.JwtPrincipal;
-import com.company.mailing.security.MailCredentials;
-import com.company.mailing.security.MailSessionService;
 import com.company.mailing.service.MailService;
+import com.company.mailing.service.UserMailSettingsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -32,6 +33,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -43,40 +45,37 @@ import org.springframework.web.bind.annotation.RestController;
 public class MailController {
 
     private final MailService mailService;
-    private final MailSessionService mailSessionService;
+    private final UserMailSettingsService userMailSettingsService;
 
-    public MailController(MailService mailService, MailSessionService mailSessionService) {
+    public MailController(MailService mailService, UserMailSettingsService userMailSettingsService) {
         this.mailService = mailService;
-        this.mailSessionService = mailSessionService;
+        this.userMailSettingsService = userMailSettingsService;
+    }
+
+    @GetMapping("/settings")
+    public MailSettingsResponse getSettings(@AuthenticationPrincipal JwtPrincipal principal) {
+        return userMailSettingsService.getSettings(principal);
+    }
+
+    @PutMapping("/settings")
+    public MailSettingsResponse saveSettings(
+            @Valid @RequestBody MailSettingsRequest request,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        MailConnectionSettings settings = userMailSettingsService.buildForSave(principal, request);
+        mailService.testConnection(settings);
+        return userMailSettingsService.saveSettings(principal, settings);
     }
 
     @PostMapping("/test-connection")
     public Map<String, String> testConnection(@AuthenticationPrincipal JwtPrincipal principal) {
-        mailService.testConnection(resolveCredentials(principal));
+        mailService.testConnection(resolveSettings(principal));
         return Map.of("status", "connected");
-    }
-
-    @PostMapping("/connect")
-    public Map<String, String> connectMailbox(
-            @Valid @RequestBody ConnectMailboxRequest request,
-            @AuthenticationPrincipal JwtPrincipal principal
-    ) {
-        String mailboxUsername = resolveMailboxUsername(request.username(), principal);
-        MailCredentials credentials = new MailCredentials(mailboxUsername, request.password());
-        mailService.testConnection(credentials);
-        mailSessionService.bindCredentials(principal, credentials);
-        return Map.of("status", "connected", "mailbox", mailboxUsername);
-    }
-
-    @DeleteMapping("/connect")
-    public Map<String, String> disconnectMailbox(@AuthenticationPrincipal JwtPrincipal principal) {
-        mailSessionService.clearCredentials(principal);
-        return Map.of("status", "disconnected");
     }
 
     @GetMapping("/folders")
     public List<String> listFolders(@AuthenticationPrincipal JwtPrincipal principal) {
-        return mailService.listFolders(resolveCredentials(principal));
+        return mailService.listFolders(resolveSettings(principal));
     }
 
     @GetMapping("/messages")
@@ -87,7 +86,7 @@ public class MailController {
             @RequestParam(defaultValue = "false") boolean unseenOnly,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        return mailService.listMessages(resolveCredentials(principal), folder, limit, offset, unseenOnly);
+        return mailService.listMessages(resolveSettings(principal), folder, limit, offset, unseenOnly);
     }
 
     @GetMapping("/messages/{uid}")
@@ -96,7 +95,16 @@ public class MailController {
             @RequestParam(required = false) String folder,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        return mailService.getMessage(resolveCredentials(principal), uid, folder);
+        return mailService.getMessage(resolveSettings(principal), uid, folder);
+    }
+
+    @GetMapping("/messages/{uid}/thread")
+    public MessageThreadResponse getThread(
+            @PathVariable long uid,
+            @RequestParam(required = false) String folder,
+            @AuthenticationPrincipal JwtPrincipal principal
+    ) {
+        return mailService.getThread(resolveSettings(principal), uid, folder);
     }
 
     @GetMapping("/messages/{uid}/attachments/{index}")
@@ -107,7 +115,7 @@ public class MailController {
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
         MailService.AttachmentDownloadData attachment = mailService.getAttachment(
-                resolveCredentials(principal),
+                resolveSettings(principal),
                 uid,
                 folder,
                 index
@@ -132,7 +140,7 @@ public class MailController {
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
         boolean read = Boolean.TRUE.equals(request.read());
-        mailService.markRead(resolveCredentials(principal), uid, read, folder);
+        mailService.markRead(resolveSettings(principal), uid, read, folder);
         return new ReadStatusResponse(uid, read);
     }
 
@@ -143,7 +151,7 @@ public class MailController {
             @RequestParam(required = false) String folder,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        mailService.moveMessage(resolveCredentials(principal), uid, folder, request.targetFolder());
+        mailService.moveMessage(resolveSettings(principal), uid, folder, request.targetFolder());
         return new MoveStatusResponse(uid, request.targetFolder());
     }
 
@@ -153,7 +161,7 @@ public class MailController {
             @RequestParam(required = false) String folder,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        mailService.deleteMessage(resolveCredentials(principal), uid, folder);
+        mailService.deleteMessage(resolveSettings(principal), uid, folder);
         return new DeleteStatusResponse(uid, true);
     }
 
@@ -162,7 +170,7 @@ public class MailController {
             @Valid @RequestBody SendMessageRequest request,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        return mailService.sendMessage(resolveCredentials(principal), request);
+        return mailService.sendMessage(resolveSettings(principal), request);
     }
 
     private MediaType resolveMediaType(String value) {
@@ -176,21 +184,7 @@ public class MailController {
         }
     }
 
-    private MailCredentials resolveCredentials(JwtPrincipal principal) {
-        try {
-            return mailSessionService.resolveCredentials(principal);
-        } catch (IllegalArgumentException ex) {
-            throw new MailServiceException("Mailbox is not connected. Call /mail/connect first.");
-        }
-    }
-
-    private String resolveMailboxUsername(String requestedUsername, JwtPrincipal principal) {
-        if (requestedUsername != null && !requestedUsername.isBlank()) {
-            return requestedUsername.trim();
-        }
-        if (principal != null && principal.username() != null && !principal.username().isBlank()) {
-            return principal.username().trim();
-        }
-        throw new MailServiceException("Mailbox username is required.");
+    private MailConnectionSettings resolveSettings(JwtPrincipal principal) {
+        return userMailSettingsService.requireSettings(principal);
     }
 }

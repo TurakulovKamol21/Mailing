@@ -1,7 +1,6 @@
 package com.company.mailing.config;
 
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
@@ -9,16 +8,14 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "mail")
 public class MailProperties {
 
-    @NotBlank
-    private String imapHost;
+    private String imapHost = "";
 
     @Min(1)
     private int imapPort = 993;
 
     private boolean imapSsl = true;
 
-    @NotBlank
-    private String smtpHost;
+    private String smtpHost = "";
 
     @Min(1)
     private int smtpPort = 587;

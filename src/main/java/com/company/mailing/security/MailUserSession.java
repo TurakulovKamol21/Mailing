@@ -14,6 +14,7 @@ public record MailUserSession(
 ) {
     public MailUserSession {
         roles = roles == null ? List.of("USER") : List.copyOf(roles);
+        password = password == null ? "" : password;
     }
 
     public boolean isExpired(Instant now) {

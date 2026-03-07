@@ -1,10 +1,13 @@
 package com.company.mailing.controller.auth;
 
+import com.company.mailing.dto.auth.GoogleLoginRequest;
 import com.company.mailing.dto.auth.LoginRequest;
 import com.company.mailing.dto.auth.RefreshRequest;
 import com.company.mailing.dto.auth.TokenResponse;
 import com.company.mailing.exception.MailServiceException;
 import com.company.mailing.security.AppAuthProperties;
+import com.company.mailing.security.GoogleAuthService;
+import com.company.mailing.security.GoogleAuthProperties;
 import com.company.mailing.security.JwtPrincipal;
 import com.company.mailing.security.JwtService;
 import com.company.mailing.security.MailCredentials;
@@ -15,8 +18,10 @@ import jakarta.validation.Valid;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,17 +36,32 @@ public class AuthController {
     private final JwtService jwtService;
     private final MailSessionService mailSessionService;
     private final MailService mailService;
+    private final GoogleAuthService googleAuthService;
+    private final GoogleAuthProperties googleAuthProperties;
 
     public AuthController(
             AppAuthProperties appAuthProperties,
             JwtService jwtService,
             MailSessionService mailSessionService,
-            MailService mailService
+            MailService mailService,
+            GoogleAuthService googleAuthService,
+            GoogleAuthProperties googleAuthProperties
     ) {
         this.appAuthProperties = appAuthProperties;
         this.jwtService = jwtService;
         this.mailSessionService = mailSessionService;
         this.mailService = mailService;
+        this.googleAuthService = googleAuthService;
+        this.googleAuthProperties = googleAuthProperties;
+    }
+
+    @GetMapping("/config")
+    public Map<String, Object> config() {
+        String clientId = googleAuthProperties.getClientId() == null ? "" : googleAuthProperties.getClientId().trim();
+        return Map.of(
+                "googleClientId", clientId,
+                "googleEnabled", !clientId.isBlank()
+        );
     }
 
     @PostMapping("/login")
@@ -55,9 +75,17 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid mailbox username or password.");
         }
 
-        UUID userId = deriveUserId(username);
+        UUID userId = deriveLocalUserId(username);
         List<String> roles = appAuthProperties.resolveRoles();
         MailUserSession session = mailSessionService.createSession(credentials, userId, roles);
+        return generateTokens(session.username(), session.roles(), session.userId(), session.sid());
+    }
+
+    @PostMapping("/google")
+    public TokenResponse google(@Valid @RequestBody GoogleLoginRequest request) {
+        GoogleAuthService.GoogleUserProfile profile = googleAuthService.verify(request.idToken());
+        List<String> roles = appAuthProperties.resolveRoles();
+        MailUserSession session = mailSessionService.createGoogleSession(profile.email(), profile.userId(), roles);
         return generateTokens(session.username(), session.roles(), session.userId(), session.sid());
     }
 
@@ -94,7 +122,7 @@ public class AuthController {
         return value.toLowerCase(Locale.ROOT);
     }
 
-    private UUID deriveUserId(String username) {
+    private UUID deriveLocalUserId(String username) {
         return UUID.nameUUIDFromBytes(("mail-user:" + username).getBytes(StandardCharsets.UTF_8));
     }
 }

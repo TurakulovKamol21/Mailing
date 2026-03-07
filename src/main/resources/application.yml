@@ -1,6 +1,14 @@
 spring:
   config:
     import: optional:file:.env[.properties]
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/mail_db}
+    username: ${SPRING_DATASOURCE_USERNAME:mail_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:123mail123}
+  jpa:
+    hibernate:
+      ddl-auto: ${SPRING_JPA_DDL_AUTO:update}
+    open-in-view: false
   cloud:
     openfeign:
       client:
@@ -28,6 +36,11 @@ security:
     secret: ${JWT_SECRET:replace-this-with-a-strong-32-plus-char-secret-key}
     access-token-minutes: ${JWT_ACCESS_TOKEN_MINUTES:30}
     refresh-token-days: ${JWT_REFRESH_TOKEN_DAYS:7}
+  mail-settings:
+    encryption-key: ${MAIL_SETTINGS_ENCRYPTION_KEY:}
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    token-info-url: ${GOOGLE_TOKEN_INFO_URL:https://oauth2.googleapis.com/tokeninfo}
   auth:
     roles: ${APP_AUTH_ROLES:USER}
     session-ttl-minutes: ${APP_AUTH_SESSION_TTL_MINUTES:60}

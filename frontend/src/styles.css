@@ -94,6 +94,36 @@ body {
     margin: 0;
 }
 
+.login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.login-divider::before,
+.login-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+}
+
+.google-login {
+    display: grid;
+    gap: 10px;
+}
+
+.google-login-slot {
+    min-height: 42px;
+    display: grid;
+    justify-items: center;
+}
+
 .stack {
     display: grid;
     gap: 14px;
@@ -471,6 +501,26 @@ textarea:focus {
 }
 
 .compose-grid {
+    display: grid;
+    gap: 10px;
+}
+
+.settings-panel {
+    position: fixed;
+    right: 20px;
+    top: 76px;
+    width: min(560px, calc(100vw - 24px));
+    max-height: calc(100vh - 96px);
+    overflow: auto;
+    z-index: 95;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 20px 46px rgba(31, 41, 55, 0.22);
+    padding: 14px;
+}
+
+.settings-grid {
     display: grid;
     gap: 10px;
 }

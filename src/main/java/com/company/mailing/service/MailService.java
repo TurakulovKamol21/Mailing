@@ -1,11 +1,13 @@
 package com.company.mailing.service;
 
+import com.company.mailing.config.MailConnectionSettings;
 import com.company.mailing.config.MailProperties;
 import com.company.mailing.dto.AttachmentInfoResponse;
 import com.company.mailing.dto.AttachmentInput;
 import com.company.mailing.dto.MessageDetailResponse;
 import com.company.mailing.dto.MessageListResponse;
 import com.company.mailing.dto.MessageSummaryResponse;
+import com.company.mailing.dto.MessageThreadResponse;
 import com.company.mailing.dto.SendMessageRequest;
 import com.company.mailing.dto.SendMessageResponse;
 import com.company.mailing.exception.MailServiceException;
@@ -41,16 +43,21 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
 @Service
 public class MailService {
 
+    private static final Pattern MESSAGE_ID_PATTERN = Pattern.compile("<[^>]+>");
     private final MailProperties properties;
 
     public MailService(MailProperties properties) {
@@ -58,12 +65,16 @@ public class MailService {
     }
 
     public void testConnection(MailCredentials credentials) {
+        testConnection(fromDefaultSettings(credentials));
+    }
+
+    public void testConnection(MailConnectionSettings settings) {
         Store store = null;
         Transport transport = null;
         try {
-            store = openStore(credentials);
-            Session smtpSession = createSmtpSession(credentials);
-            transport = openSmtpTransport(smtpSession, credentials);
+            store = openStore(settings);
+            Session smtpSession = createSmtpSession(settings);
+            transport = openSmtpTransport(smtpSession, settings);
         } catch (MessagingException ex) {
             throw new MailServiceException("Mail connection failed: " + ex.getMessage(), ex);
         } finally {
@@ -72,10 +83,10 @@ public class MailService {
         }
     }
 
-    public List<String> listFolders(MailCredentials credentials) {
+    public List<String> listFolders(MailConnectionSettings settings) {
         Store store = null;
         try {
-            store = openStore(credentials);
+            store = openStore(settings);
             Folder defaultFolder = store.getDefaultFolder();
             Folder[] folders = defaultFolder.list("*");
             Set<String> names = new LinkedHashSet<>();
@@ -85,7 +96,7 @@ public class MailService {
                 }
             }
             if (names.isEmpty()) {
-                names.add(properties.getDefaultFolder());
+                names.add(settings.resolveDefaultFolder());
             }
             return List.copyOf(names);
         } catch (MessagingException ex) {
@@ -96,7 +107,7 @@ public class MailService {
     }
 
     public MessageListResponse listMessages(
-            MailCredentials credentials,
+            MailConnectionSettings settings,
             String folderName,
             int limit,
             int offset,
@@ -105,8 +116,8 @@ public class MailService {
         Store store = null;
         IMAPFolder folder = null;
         try {
-            store = openStore(credentials);
-            folder = openFolder(store, resolveFolder(folderName), Folder.READ_ONLY);
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_ONLY);
 
             Message[] pageMessages;
             int total;
@@ -135,12 +146,12 @@ public class MailService {
         }
     }
 
-    public MessageDetailResponse getMessage(MailCredentials credentials, long uid, String folderName) {
+    public MessageDetailResponse getMessage(MailConnectionSettings settings, long uid, String folderName) {
         Store store = null;
         IMAPFolder folder = null;
         try {
-            store = openStore(credentials);
-            folder = openFolder(store, resolveFolder(folderName), Folder.READ_ONLY);
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_ONLY);
             Message message = folder.getMessageByUID(uid);
             if (message == null) {
                 throw new MailServiceException("Message not found: " + uid);
@@ -154,8 +165,87 @@ public class MailService {
         }
     }
 
+    public MessageThreadResponse getThread(MailConnectionSettings settings, long anchorUid, String folderName) {
+        Store store = null;
+        IMAPFolder folder = null;
+        try {
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_ONLY);
+            Message anchorMessage = folder.getMessageByUID(anchorUid);
+            if (anchorMessage == null) {
+                throw new MailServiceException("Message not found: " + anchorUid);
+            }
+
+            Message[] allMessages = folder.getMessages();
+            prefetchThreadData(folder, allMessages);
+
+            List<ThreadCandidate> candidates = new ArrayList<>(allMessages.length);
+            for (Message message : allMessages) {
+                candidates.add(toThreadCandidate(folder, message));
+            }
+
+            ThreadCandidate anchor = null;
+            for (ThreadCandidate candidate : candidates) {
+                if (candidate.uid() == anchorUid) {
+                    anchor = candidate;
+                    break;
+                }
+            }
+            if (anchor == null) {
+                anchor = toThreadCandidate(folder, anchorMessage);
+            }
+
+            Set<String> seedTokens = new LinkedHashSet<>(anchor.tokens());
+            Set<Long> matchedUids = new LinkedHashSet<>();
+            matchedUids.add(anchorUid);
+
+            if (!seedTokens.isEmpty()) {
+                boolean changed;
+                do {
+                    changed = false;
+                    for (ThreadCandidate candidate : candidates) {
+                        if (matchedUids.contains(candidate.uid())) {
+                            continue;
+                        }
+                        if (!hasIntersection(candidate.tokens(), seedTokens)) {
+                            continue;
+                        }
+                        matchedUids.add(candidate.uid());
+                        if (seedTokens.addAll(candidate.tokens())) {
+                            changed = true;
+                        }
+                    }
+                } while (changed);
+            }
+
+            List<ThreadCandidate> matched = candidates.stream()
+                    .filter(candidate -> matchedUids.contains(candidate.uid()))
+                    .sorted(
+                            Comparator.comparingLong(ThreadCandidate::sortTimestamp)
+                                    .thenComparingInt(ThreadCandidate::messageNumber)
+                    )
+                    .toList();
+
+            List<MessageDetailResponse> items = new ArrayList<>(matched.size());
+            for (ThreadCandidate candidate : matched) {
+                try {
+                    items.add(toDetail(folder, candidate.message()));
+                } catch (MessagingException | IOException ex) {
+                    throw new MailServiceException("Could not read message thread.", ex);
+                }
+            }
+
+            return new MessageThreadResponse(anchorUid, folder.getFullName(), items.size(), items);
+        } catch (MessagingException ex) {
+            throw new MailServiceException("Could not fetch message thread: " + ex.getMessage(), ex);
+        } finally {
+            closeFolder(folder, false);
+            closeStore(store);
+        }
+    }
+
     public AttachmentDownloadData getAttachment(
-            MailCredentials credentials,
+            MailConnectionSettings settings,
             long uid,
             String folderName,
             int attachmentIndex
@@ -167,8 +257,8 @@ public class MailService {
         Store store = null;
         IMAPFolder folder = null;
         try {
-            store = openStore(credentials);
-            folder = openFolder(store, resolveFolder(folderName), Folder.READ_ONLY);
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_ONLY);
             Message message = folder.getMessageByUID(uid);
             if (message == null) {
                 throw new MailServiceException("Message not found: " + uid);
@@ -187,12 +277,12 @@ public class MailService {
         }
     }
 
-    public void markRead(MailCredentials credentials, long uid, boolean read, String folderName) {
+    public void markRead(MailConnectionSettings settings, long uid, boolean read, String folderName) {
         Store store = null;
         IMAPFolder folder = null;
         try {
-            store = openStore(credentials);
-            folder = openFolder(store, resolveFolder(folderName), Folder.READ_WRITE);
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_WRITE);
             Message message = folder.getMessageByUID(uid);
             if (message == null) {
                 throw new MailServiceException("Message not found: " + uid);
@@ -207,7 +297,7 @@ public class MailService {
     }
 
     public void moveMessage(
-            MailCredentials credentials,
+            MailConnectionSettings settings,
             long uid,
             String folderName,
             String targetFolderName
@@ -216,8 +306,8 @@ public class MailService {
         IMAPFolder sourceFolder = null;
         Folder targetFolder = null;
         try {
-            store = openStore(credentials);
-            sourceFolder = openFolder(store, resolveFolder(folderName), Folder.READ_WRITE);
+            store = openStore(settings);
+            sourceFolder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_WRITE);
             targetFolder = store.getFolder(targetFolderName);
             if (targetFolder == null) {
                 throw new MailServiceException("Target folder not found: " + targetFolderName);
@@ -242,12 +332,12 @@ public class MailService {
         }
     }
 
-    public void deleteMessage(MailCredentials credentials, long uid, String folderName) {
+    public void deleteMessage(MailConnectionSettings settings, long uid, String folderName) {
         Store store = null;
         IMAPFolder folder = null;
         try {
-            store = openStore(credentials);
-            folder = openFolder(store, resolveFolder(folderName), Folder.READ_WRITE);
+            store = openStore(settings);
+            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_WRITE);
             Message message = folder.getMessageByUID(uid);
             if (message == null) {
                 throw new MailServiceException("Message not found: " + uid);
@@ -262,17 +352,17 @@ public class MailService {
         }
     }
 
-    public SendMessageResponse sendMessage(MailCredentials credentials, SendMessageRequest request) {
-        Session smtpSession = createSmtpSession(credentials);
+    public SendMessageResponse sendMessage(MailConnectionSettings settings, SendMessageRequest request) {
+        Session smtpSession = createSmtpSession(settings);
         Transport transport = null;
         try {
-            MimeMessage mimeMessage = buildMimeMessage(smtpSession, request, credentials);
+            MimeMessage mimeMessage = buildMimeMessage(smtpSession, request, settings);
             Address[] recipients = mimeMessage.getAllRecipients();
             if (recipients == null || recipients.length == 0) {
                 throw new MailServiceException("At least one recipient must be provided.");
             }
 
-            transport = openSmtpTransport(smtpSession, credentials);
+            transport = openSmtpTransport(smtpSession, settings);
             transport.sendMessage(mimeMessage, recipients);
             return new SendMessageResponse("sent", recipients.length);
         } catch (MessagingException | IOException ex) {
@@ -471,11 +561,11 @@ public class MailService {
     private MimeMessage buildMimeMessage(
             Session session,
             SendMessageRequest request,
-            MailCredentials credentials
+            MailConnectionSettings settings
     )
             throws MessagingException, IOException {
         MimeMessage message = new MimeMessage(session);
-        message.setFrom(new InternetAddress(credentials.username()));
+        message.setFrom(new InternetAddress(settings.resolveFrom()));
         setRecipients(message, Message.RecipientType.TO, request.to());
         setRecipients(message, Message.RecipientType.CC, request.cc());
         setRecipients(message, Message.RecipientType.BCC, request.bcc());
@@ -672,15 +762,15 @@ public class MailService {
         return date.toInstant().atZone(ZoneId.systemDefault()).toOffsetDateTime();
     }
 
-    private Store openStore(MailCredentials credentials) throws MessagingException {
-        Session session = Session.getInstance(buildImapProperties());
-        String protocol = properties.isImapSsl() ? "imaps" : "imap";
+    private Store openStore(MailConnectionSettings settings) throws MessagingException {
+        Session session = Session.getInstance(buildImapProperties(settings));
+        String protocol = settings.imapSsl() ? "imaps" : "imap";
         Store store = session.getStore(protocol);
         store.connect(
-                properties.getImapHost(),
-                properties.getImapPort(),
-                credentials.username(),
-                credentials.password()
+                settings.imapHost(),
+                settings.imapPort(),
+                settings.username(),
+                settings.password()
         );
         return store;
     }
@@ -724,6 +814,90 @@ public class MailService {
         folder.fetch(messages, profile);
     }
 
+    private void prefetchThreadData(IMAPFolder folder, Message[] messages) throws MessagingException {
+        if (messages == null || messages.length == 0) {
+            return;
+        }
+        FetchProfile profile = new FetchProfile();
+        profile.add(FetchProfile.Item.ENVELOPE);
+        profile.add(FetchProfile.Item.FLAGS);
+        profile.add(UIDFolder.FetchProfileItem.UID);
+        profile.add("Message-ID");
+        profile.add("In-Reply-To");
+        profile.add("References");
+        folder.fetch(messages, profile);
+    }
+
+    private ThreadCandidate toThreadCandidate(IMAPFolder folder, Message message) {
+        try {
+            long uid = folder.getUID(message);
+            Set<String> tokens = extractThreadTokens(message);
+            Date date = message.getSentDate() != null ? message.getSentDate() : message.getReceivedDate();
+            long sortTimestamp = date == null ? Long.MAX_VALUE : date.getTime();
+            return new ThreadCandidate(message, uid, tokens, sortTimestamp, message.getMessageNumber());
+        } catch (MessagingException ex) {
+            throw new MailServiceException("Could not build thread metadata.", ex);
+        }
+    }
+
+    private Set<String> extractThreadTokens(Message message) throws MessagingException {
+        Set<String> tokens = new LinkedHashSet<>();
+        tokens.addAll(parseMessageIdTokens(extractSingleHeader(message, "Message-ID")));
+        tokens.addAll(parseMessageIdTokens(extractSingleHeader(message, "In-Reply-To")));
+        tokens.addAll(parseMessageIdTokens(extractSingleHeader(message, "References")));
+        return tokens;
+    }
+
+    private Set<String> parseMessageIdTokens(String headerValue) {
+        Set<String> tokens = new LinkedHashSet<>();
+        if (headerValue == null || headerValue.isBlank()) {
+            return tokens;
+        }
+
+        Matcher matcher = MESSAGE_ID_PATTERN.matcher(headerValue);
+        while (matcher.find()) {
+            addThreadToken(tokens, matcher.group());
+        }
+
+        if (tokens.isEmpty()) {
+            String normalized = headerValue.replace(',', ' ').replace(';', ' ');
+            String[] parts = normalized.split("\\s+");
+            for (String part : parts) {
+                addThreadToken(tokens, part);
+            }
+        }
+        return tokens;
+    }
+
+    private void addThreadToken(Set<String> tokens, String rawValue) {
+        if (rawValue == null) {
+            return;
+        }
+        String value = rawValue.trim();
+        if (value.startsWith("<")) {
+            value = value.substring(1);
+        }
+        if (value.endsWith(">")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (!normalized.isBlank()) {
+            tokens.add(normalized);
+        }
+    }
+
+    private boolean hasIntersection(Set<String> left, Set<String> right) {
+        if (left == null || left.isEmpty() || right == null || right.isEmpty()) {
+            return false;
+        }
+        for (String value : left) {
+            if (right.contains(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private IMAPFolder openFolder(Store store, String folderName, int mode) throws MessagingException {
         Folder rawFolder = store.getFolder(folderName);
         if (rawFolder == null || !rawFolder.exists()) {
@@ -736,53 +910,53 @@ public class MailService {
         return imapFolder;
     }
 
-    private Session createSmtpSession(MailCredentials credentials) {
-        Properties smtpProperties = buildSmtpProperties();
+    private Session createSmtpSession(MailConnectionSettings settings) {
+        Properties smtpProperties = buildSmtpProperties(settings);
         return Session.getInstance(smtpProperties, new Authenticator() {
             @Override
             protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(credentials.username(), credentials.password());
+                return new PasswordAuthentication(settings.username(), settings.password());
             }
         });
     }
 
-    private Transport openSmtpTransport(Session session, MailCredentials credentials) throws MessagingException {
+    private Transport openSmtpTransport(Session session, MailConnectionSettings settings) throws MessagingException {
         Transport transport = session.getTransport("smtp");
         transport.connect(
-                properties.getSmtpHost(),
-                properties.getSmtpPort(),
-                credentials.username(),
-                credentials.password()
+                settings.smtpHost(),
+                settings.smtpPort(),
+                settings.username(),
+                settings.password()
         );
         return transport;
     }
 
-    private Properties buildImapProperties() {
+    private Properties buildImapProperties(MailConnectionSettings settings) {
         Properties props = new Properties();
-        int timeoutMs = properties.getTimeoutSeconds() * 1000;
+        int timeoutMs = settings.timeoutSeconds() * 1000;
 
-        props.put("mail.store.protocol", properties.isImapSsl() ? "imaps" : "imap");
+        props.put("mail.store.protocol", settings.imapSsl() ? "imaps" : "imap");
         props.put("mail.imap.connectiontimeout", String.valueOf(timeoutMs));
         props.put("mail.imap.timeout", String.valueOf(timeoutMs));
         props.put("mail.imaps.connectiontimeout", String.valueOf(timeoutMs));
         props.put("mail.imaps.timeout", String.valueOf(timeoutMs));
-        props.put("mail.imap.ssl.enable", String.valueOf(properties.isImapSsl()));
-        props.put("mail.imaps.ssl.enable", String.valueOf(properties.isImapSsl()));
+        props.put("mail.imap.ssl.enable", String.valueOf(settings.imapSsl()));
+        props.put("mail.imaps.ssl.enable", String.valueOf(settings.imapSsl()));
         return props;
     }
 
-    private Properties buildSmtpProperties() {
+    private Properties buildSmtpProperties(MailConnectionSettings settings) {
         Properties props = new Properties();
-        int timeoutMs = properties.getTimeoutSeconds() * 1000;
+        int timeoutMs = settings.timeoutSeconds() * 1000;
 
-        props.put("mail.smtp.host", properties.getSmtpHost());
-        props.put("mail.smtp.port", String.valueOf(properties.getSmtpPort()));
+        props.put("mail.smtp.host", settings.smtpHost());
+        props.put("mail.smtp.port", String.valueOf(settings.smtpPort()));
         props.put("mail.smtp.auth", "true");
         props.put("mail.smtp.connectiontimeout", String.valueOf(timeoutMs));
         props.put("mail.smtp.timeout", String.valueOf(timeoutMs));
         props.put("mail.smtp.writetimeout", String.valueOf(timeoutMs));
-        props.put("mail.smtp.starttls.enable", String.valueOf(properties.isSmtpStarttls()));
-        props.put("mail.smtp.ssl.enable", String.valueOf(properties.isSmtpSsl()));
+        props.put("mail.smtp.starttls.enable", String.valueOf(settings.smtpStarttls()));
+        props.put("mail.smtp.ssl.enable", String.valueOf(settings.smtpSsl()));
         return props;
     }
 
@@ -825,9 +999,9 @@ public class MailService {
         }
     }
 
-    private String resolveFolder(String folderName) {
+    private String resolveFolder(String folderName, MailConnectionSettings settings) {
         if (folderName == null || folderName.isBlank()) {
-            return properties.getDefaultFolder();
+            return settings.resolveDefaultFolder();
         }
         return folderName.trim();
     }
@@ -875,6 +1049,32 @@ public class MailService {
     public record AttachmentDownloadData(String filename, String contentType, byte[] content) {
     }
 
+    private MailConnectionSettings fromDefaultSettings(MailCredentials credentials) {
+        return new MailConnectionSettings(
+                properties.getImapHost(),
+                properties.getImapPort(),
+                properties.isImapSsl(),
+                properties.getSmtpHost(),
+                properties.getSmtpPort(),
+                properties.isSmtpStarttls(),
+                properties.isSmtpSsl(),
+                credentials.username(),
+                credentials.password(),
+                credentials.username(),
+                properties.getDefaultFolder(),
+                properties.getTimeoutSeconds()
+        );
+    }
+
     private record ParsedBody(String textBody, String htmlBody, List<AttachmentInfoResponse> attachments) {
+    }
+
+    private record ThreadCandidate(
+            Message message,
+            long uid,
+            Set<String> tokens,
+            long sortTimestamp,
+            int messageNumber
+    ) {
     }
 }

@@ -20,6 +20,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("detail", ex.getMessage()));
     }
 
+    @ExceptionHandler(MailSettingsRequiredException.class)
+    public ResponseEntity<Map<String, String>> handleSettingsRequired(MailSettingsRequiredException ex) {
+        return ResponseEntity.status(HttpStatus.PRECONDITION_REQUIRED).body(Map.of("detail", ex.getMessage()));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> handleValidation(MethodArgumentNotValidException ex) {
         String fieldErrors = ex.getBindingResult()

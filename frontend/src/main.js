@@ -1,5 +1,8 @@
 (function () {
     const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+    let googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+    let googleScriptPromise = null;
+    let authConfigPromise = null;
 
     const STORAGE_KEYS = {
         access: "mailing.accessToken",
@@ -24,7 +27,9 @@
         messagePageCache: new Map(),
         messagePageReqId: 0,
         composeReplyContext: null,
-        readerMode: false
+        readerMode: false,
+        mailSettingsConfigured: false,
+        settingsLocked: false
     };
 
     const el = {
@@ -33,6 +38,8 @@
         loginForm: document.getElementById("loginForm"),
         loginUsername: document.getElementById("loginUsername"),
         loginPassword: document.getElementById("loginPassword"),
+        googleSigninButton: document.getElementById("googleSigninButton"),
+        googleSigninHint: document.getElementById("googleSigninHint"),
         sessionMeta: document.getElementById("sessionMeta"),
         folders: document.getElementById("folders"),
         messages: document.getElementById("messages"),
@@ -46,6 +53,7 @@
         btnPrevPage: document.getElementById("btnPrevPage"),
         btnNextPage: document.getElementById("btnNextPage"),
         btnReloadFolders: document.getElementById("btnReloadFolders"),
+        btnMailSettings: document.getElementById("btnMailSettings"),
         btnTestConnection: document.getElementById("btnTestConnection"),
         btnRefreshToken: document.getElementById("btnRefreshToken"),
         btnLogout: document.getElementById("btnLogout"),
@@ -63,6 +71,22 @@
         btnReply: document.getElementById("btnReply"),
         btnMove: document.getElementById("btnMove"),
         btnDelete: document.getElementById("btnDelete"),
+        settingsPanel: document.getElementById("settingsPanel"),
+        settingsForm: document.getElementById("settingsForm"),
+        btnSettingsClose: document.getElementById("btnSettingsClose"),
+        settingsHint: document.getElementById("settingsHint"),
+        settingsUsername: document.getElementById("settingsUsername"),
+        settingsPassword: document.getElementById("settingsPassword"),
+        settingsFromEmail: document.getElementById("settingsFromEmail"),
+        settingsDefaultFolder: document.getElementById("settingsDefaultFolder"),
+        settingsImapHost: document.getElementById("settingsImapHost"),
+        settingsImapPort: document.getElementById("settingsImapPort"),
+        settingsImapSsl: document.getElementById("settingsImapSsl"),
+        settingsSmtpHost: document.getElementById("settingsSmtpHost"),
+        settingsSmtpPort: document.getElementById("settingsSmtpPort"),
+        settingsSmtpStarttls: document.getElementById("settingsSmtpStarttls"),
+        settingsSmtpSsl: document.getElementById("settingsSmtpSsl"),
+        settingsTimeoutSeconds: document.getElementById("settingsTimeoutSeconds"),
         toast: document.getElementById("toast"),
         globalLoader: document.getElementById("globalLoader")
     };
@@ -76,7 +100,9 @@
             showApp();
             loadWorkspace().catch((err) => {
                 showToast(err.message, "error");
-                logout(true);
+                if (err && err.status === 401) {
+                    logout(true);
+                }
             });
         } else {
             showLogin();
@@ -86,6 +112,7 @@
     function bindEvents() {
         el.loginForm.addEventListener("submit", onLoginSubmit);
         el.btnReloadFolders.addEventListener("click", () => loadFolders());
+        el.btnMailSettings.addEventListener("click", () => openSettingsPanel(false));
         el.searchInput.addEventListener("input", () => {
             state.searchQuery = (el.searchInput.value || "").trim().toLowerCase();
             renderMessages();
@@ -126,6 +153,8 @@
         el.btnMove.addEventListener("click", moveMessagePrompt);
         el.btnDelete.addEventListener("click", deleteSelectedMessage);
         el.btnBackToList.addEventListener("click", () => setReaderMode(false));
+        el.btnSettingsClose.addEventListener("click", closeSettingsPanel);
+        el.settingsForm.addEventListener("submit", onSettingsSubmit);
     }
 
     async function onLoginSubmit(event) {
@@ -151,13 +180,227 @@
         }
     }
 
+    async function onGoogleCredentialResponse(response) {
+        const credential = trimToNull(response && response.credential);
+        if (!credential) {
+            showToast("Google sign-in token is missing.", "error");
+            return;
+        }
+
+        try {
+            const resp = await requestJson("/auth/google", {
+                method: "POST",
+                body: JSON.stringify({idToken: credential})
+            }, false);
+            saveSession(resp.accessToken, resp.refreshToken);
+            showApp();
+            await loadWorkspace();
+            showToast("Signed in with Google.", "success");
+        } catch (err) {
+            showToast(err.message, "error");
+        }
+    }
+
+    async function setupGoogleLogin() {
+        if (!el.googleSigninButton || !el.googleSigninHint) {
+            return;
+        }
+        el.googleSigninButton.innerHTML = "";
+        const clientId = await resolveGoogleClientId();
+        if (!clientId) {
+            el.googleSigninHint.textContent = "Google sign-in is not configured.";
+            el.googleSigninHint.classList.remove("hidden");
+            return;
+        }
+
+        try {
+            await ensureGoogleScript();
+            if (!window.google || !window.google.accounts || !window.google.accounts.id) {
+                throw new Error("Google Identity Services unavailable.");
+            }
+            el.googleSigninHint.classList.add("hidden");
+            window.google.accounts.id.initialize({
+                client_id: clientId,
+                callback: (googleResponse) => {
+                    void onGoogleCredentialResponse(googleResponse);
+                },
+                ux_mode: "popup",
+                auto_select: false,
+                cancel_on_tap_outside: true
+            });
+            window.google.accounts.id.renderButton(el.googleSigninButton, {
+                theme: "outline",
+                size: "large",
+                shape: "pill",
+                text: "continue_with",
+                width: 320
+            });
+        } catch (err) {
+            el.googleSigninHint.textContent = "Could not load Google sign-in.";
+            el.googleSigninHint.classList.remove("hidden");
+        }
+    }
+
+    async function resolveGoogleClientId() {
+        if (googleClientId) {
+            return googleClientId;
+        }
+        if (!authConfigPromise) {
+            authConfigPromise = requestJson("/auth/config", {}, false)
+                .then((config) => {
+                    googleClientId = trimToNull(config.googleClientId) || "";
+                    return googleClientId;
+                })
+                .catch(() => "");
+        }
+        const resolved = await authConfigPromise;
+        authConfigPromise = null;
+        return resolved;
+    }
+
+    function ensureGoogleScript() {
+        if (window.google && window.google.accounts && window.google.accounts.id) {
+            return Promise.resolve();
+        }
+        if (googleScriptPromise) {
+            return googleScriptPromise;
+        }
+
+        googleScriptPromise = new Promise((resolve, reject) => {
+            const existing = document.querySelector('script[data-google-identity="true"]');
+            if (existing) {
+                existing.addEventListener("load", resolve, {once: true});
+                existing.addEventListener("error", reject, {once: true});
+                return;
+            }
+
+            const script = document.createElement("script");
+            script.src = "https://accounts.google.com/gsi/client";
+            script.async = true;
+            script.defer = true;
+            script.dataset.googleIdentity = "true";
+            script.addEventListener("load", resolve, {once: true});
+            script.addEventListener("error", reject, {once: true});
+            document.head.appendChild(script);
+        });
+
+        return googleScriptPromise;
+    }
+
     async function loadWorkspace() {
-        await loadFolders();
-        await loadMessages();
+        await ensureMailboxSettings();
+        if (state.mailSettingsConfigured) {
+            await loadFolders();
+            await loadMessages();
+        } else {
+            renderDisconnectedWorkspace();
+        }
         renderSessionMeta();
     }
 
+    async function ensureMailboxSettings() {
+        const data = await requestJson("/mail/settings");
+        fillSettingsForm(data);
+        state.mailSettingsConfigured = Boolean(data.configured);
+        state.settingsLocked = !state.mailSettingsConfigured;
+        if (state.mailSettingsConfigured) {
+            closeSettingsPanel(true);
+        } else {
+            openSettingsPanel(true);
+            showToast("Configure mailbox settings first.", "error");
+        }
+    }
+
+    async function onSettingsSubmit(event) {
+        event.preventDefault();
+        const payload = collectSettingsPayload();
+        const saved = await requestJson("/mail/settings", {
+            method: "PUT",
+            body: JSON.stringify(payload)
+        });
+        fillSettingsForm(saved);
+        state.mailSettingsConfigured = true;
+        state.settingsLocked = false;
+        closeSettingsPanel(true);
+        showToast("Mailbox settings saved.", "success");
+        clearWorkspaceData();
+        await loadFolders();
+        await loadMessages();
+    }
+
+    function collectSettingsPayload() {
+        const password = trimToNull(el.settingsPassword.value);
+        return {
+            imapHost: trimToNull(el.settingsImapHost.value) || "",
+            imapPort: Number.parseInt(el.settingsImapPort.value, 10) || 993,
+            imapSsl: el.settingsImapSsl.checked,
+            smtpHost: trimToNull(el.settingsSmtpHost.value) || "",
+            smtpPort: Number.parseInt(el.settingsSmtpPort.value, 10) || 465,
+            smtpStarttls: el.settingsSmtpStarttls.checked,
+            smtpSsl: el.settingsSmtpSsl.checked,
+            username: trimToNull(el.settingsUsername.value) || "",
+            password: password,
+            fromEmail: trimToNull(el.settingsFromEmail.value),
+            defaultFolder: trimToNull(el.settingsDefaultFolder.value) || "INBOX",
+            timeoutSeconds: Number.parseInt(el.settingsTimeoutSeconds.value, 10) || 30
+        };
+    }
+
+    function fillSettingsForm(data) {
+        el.settingsImapHost.value = data.imapHost || "";
+        el.settingsImapPort.value = String(data.imapPort || 993);
+        el.settingsImapSsl.checked = data.imapSsl !== false;
+        el.settingsSmtpHost.value = data.smtpHost || "";
+        el.settingsSmtpPort.value = String(data.smtpPort || 465);
+        el.settingsSmtpStarttls.checked = Boolean(data.smtpStarttls);
+        el.settingsSmtpSsl.checked = data.smtpSsl !== false;
+        el.settingsUsername.value = data.username || "";
+        el.settingsFromEmail.value = data.fromEmail || "";
+        el.settingsDefaultFolder.value = data.defaultFolder || "INBOX";
+        el.settingsTimeoutSeconds.value = String(data.timeoutSeconds || 30);
+        el.settingsPassword.value = "";
+    }
+
+    function openSettingsPanel(forceRequired) {
+        if (forceRequired) {
+            state.settingsLocked = true;
+        }
+        el.settingsPanel.classList.remove("hidden");
+        el.settingsHint.textContent = state.settingsLocked
+            ? "Mailbox settings are required before loading messages."
+            : "Update settings and save to reconnect.";
+    }
+
+    function closeSettingsPanel(force) {
+        if (!force && state.settingsLocked) {
+            showToast("Save valid mailbox settings first.", "error");
+            return;
+        }
+        el.settingsPanel.classList.add("hidden");
+    }
+
+    function clearWorkspaceData() {
+        state.folders = [];
+        state.messages = [];
+        state.total = 0;
+        state.offset = 0;
+        state.selectedUid = null;
+        state.selectedDetail = null;
+        clearMessageCache();
+        setReaderMode(false);
+        renderDetail(null);
+    }
+
+    function renderDisconnectedWorkspace() {
+        clearWorkspaceData();
+        el.folders.innerHTML = '<div class="muted">Open "Mail Settings" to connect mailbox.</div>';
+        renderMessages();
+    }
+
     async function loadFolders() {
+        if (!state.mailSettingsConfigured) {
+            return;
+        }
         const folders = await requestJson("/mail/folders");
         state.folders = Array.isArray(folders) ? folders : [];
         if (!state.folders.includes(state.folder)) {
@@ -168,6 +411,9 @@
     }
 
     async function loadMessages() {
+        if (!state.mailSettingsConfigured) {
+            return;
+        }
         const reqId = ++state.messagePageReqId;
         const currentOffset = state.offset;
         const data = await getMessagePage(currentOffset);
@@ -310,17 +556,29 @@
     }
 
     async function testConnection() {
+        if (!state.mailSettingsConfigured) {
+            openSettingsPanel(true);
+            showToast("Configure mailbox settings first.", "error");
+            return;
+        }
         const data = await requestJson("/mail/test-connection", {method: "POST"});
         showToast(data.status === "connected" ? "Mail connection is healthy." : "Connection check completed.", "success");
     }
 
     async function requestJson(url, options = {}, useAuth = true) {
-        const response = await apiFetch(url, options, useAuth, true);
+        const response = await apiFetch(url, options, useAuth);
         const text = await response.text();
         const data = tryParseJson(text);
         if (!response.ok) {
             const detail = data && typeof data.detail === "string" ? data.detail : `${response.status} ${response.statusText}`;
-            throw new Error(detail);
+            const normalizedDetail = (detail || "").toLowerCase();
+            if (response.status === 428 || normalizedDetail.includes("mailbox settings not configured")) {
+                state.mailSettingsConfigured = false;
+                openSettingsPanel(true);
+            }
+            const error = new Error(detail);
+            error.status = response.status;
+            throw error;
         }
         return data || {};
     }
@@ -333,7 +591,6 @@
         if (useAuth && state.accessToken) {
             headers.Authorization = `Bearer ${state.accessToken}`;
         }
-
         const response = await fetchWithLoader(url, {...options, headers});
         if (response.status === 401 && useAuth && retryOn401 && state.refreshToken) {
             const refreshed = await refreshAccessToken(true).catch(() => false);
@@ -388,9 +645,12 @@
         state.selectedUid = null;
         state.selectedDetail = null;
         state.composeReplyContext = null;
+        state.mailSettingsConfigured = false;
+        state.settingsLocked = false;
         setReaderMode(false);
         resetComposeForm();
         closeComposePanel();
+        closeSettingsPanel(true);
         localStorage.removeItem(STORAGE_KEYS.access);
         localStorage.removeItem(STORAGE_KEYS.refresh);
         showLogin();
@@ -402,6 +662,7 @@
     function showLogin() {
         el.loginView.classList.remove("hidden");
         el.appView.classList.add("hidden");
+        void setupGoogleLogin();
     }
 
     function showApp() {
@@ -416,7 +677,9 @@
             return;
         }
         const username = payload.sub || "unknown";
-        const roles = Array.isArray(payload.roles) ? payload.roles.join(",") : "";
+        const roles = Array.isArray(payload.roles)
+            ? payload.roles.join(",")
+            : (typeof payload.roles === "string" ? payload.roles : "");
         const expiresAt = payload.exp ? new Date(payload.exp * 1000).toLocaleString() : "n/a";
         el.sessionMeta.textContent = `User: ${username} | Roles: ${roles || "none"} | Exp: ${expiresAt}`;
     }

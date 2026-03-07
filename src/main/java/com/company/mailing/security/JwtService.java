@@ -77,8 +77,10 @@ public class JwtService {
             throw new IllegalArgumentException("Token subject is missing.");
         }
 
-        Object rolesObj = claims.get("roles");
-        List<String> roles = extractRoles(rolesObj);
+        List<String> roles = extractRoles(claims.get("roles"));
+        if (roles.isEmpty()) {
+            roles = extractRolesFromUser(claims.get("user"));
+        }
         UUID userId = extractUserId(claims);
         UUID sid = parseUuid(claims.get("sid"));
 
@@ -116,10 +118,14 @@ public class JwtService {
 
     private SecretKey signingKey() {
         String secret = jwtProperties.getSecret() == null ? "" : jwtProperties.getSecret().trim();
-        if (secret.length() < 32) {
-            secret = (secret + "00000000000000000000000000000000").substring(0, 32);
+        if (secret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET is required.");
         }
-        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+        if (keyBytes.length < 32) {
+            throw new IllegalStateException("JWT_SECRET must be at least 32 bytes.");
+        }
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 
     private List<String> extractRoles(Object rolesObj) {
@@ -155,6 +161,35 @@ public class JwtService {
             return parseUuid(parsed.get("id"));
         }
         return null;
+    }
+
+    private List<String> extractRolesFromUser(Object user) {
+        if (!(user instanceof Map<?, ?> userMap)) {
+            return List.of();
+        }
+
+        Object userRoles = userMap.get("roles");
+        if (userRoles instanceof List<?> list) {
+            return list.stream()
+                    .map(this::mapRoleItem)
+                    .filter(value -> !value.isBlank())
+                    .toList();
+        }
+        if (userRoles instanceof String roleString) {
+            return extractRoles(roleString);
+        }
+        return List.of();
+    }
+
+    private String mapRoleItem(Object item) {
+        if (item == null) {
+            return "";
+        }
+        if (item instanceof Map<?, ?> roleMap) {
+            Object name = roleMap.get("name");
+            return name == null ? "" : String.valueOf(name).trim();
+        }
+        return String.valueOf(item).trim();
     }
 
     private UUID parseUuid(Object value) {

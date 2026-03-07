@@ -35,6 +35,21 @@ public class MailSessionService {
         return session;
     }
 
+    public MailUserSession createGoogleSession(String username, UUID userId, List<String> roles) {
+        purgeExpired();
+        UUID sid = UUID.randomUUID();
+        MailUserSession session = new MailUserSession(
+                sid,
+                userId,
+                username,
+                "",
+                roles,
+                nextExpiry()
+        );
+        sessions.put(sid, session);
+        return session;
+    }
+
     public MailUserSession requireActive(UUID sid, String username) {
         if (sid == null) {
             throw new IllegalArgumentException("Session id is missing.");

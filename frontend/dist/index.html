@@ -7,8 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/assets/index-D8LZRPEo.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-C7mPnyqv.css">
+  <script type="module" crossorigin src="/assets/index-ULo5lzJl.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BqJ-MddI.css">
 </head>
 <body>
 <div id="globalLoader" class="global-loader hidden" aria-live="polite" aria-busy="true">
@@ -21,7 +21,7 @@
 <main class="gmail-shell">
     <section id="loginView" class="login-panel">
         <h1>Mail Console</h1>
-        <p class="muted">Sign in to continue.</p>
+        <p class="muted">Sign in with mailbox credentials or Google.</p>
         <form id="loginForm" class="stack">
             <label class="field">
                 <span>Email</span>
@@ -33,6 +33,11 @@
             </label>
             <button class="btn primary" type="submit">Sign In</button>
         </form>
+        <div class="login-divider"><span>or</span></div>
+        <div class="google-login">
+            <div id="googleSigninButton" class="google-login-slot"></div>
+            <p id="googleSigninHint" class="muted mono hidden"></p>
+        </div>
     </section>
 
     <section id="appView" class="app hidden">
@@ -46,6 +51,7 @@
                 <input id="searchInput" type="search" placeholder="Search mail in current page...">
             </label>
             <div class="top-actions">
+                <button id="btnMailSettings" class="btn ghost tiny">Mail Settings</button>
                 <button id="btnTestConnection" class="btn ghost tiny">Connection</button>
                 <button id="btnRefreshToken" class="btn ghost tiny">Refresh Token</button>
                 <button id="btnLogout" class="btn danger tiny">Logout</button>
@@ -117,6 +123,46 @@
                 <label class="field"><span>Attachments</span><input id="attachmentsInput" type="file" multiple></label>
                 <div class="row end">
                     <button class="btn primary" type="submit">Send</button>
+                </div>
+            </form>
+        </section>
+
+        <section id="settingsPanel" class="settings-panel hidden">
+            <div class="row between">
+                <h3>Mailbox Settings</h3>
+                <button id="btnSettingsClose" class="btn tiny ghost">Close</button>
+            </div>
+            <p id="settingsHint" class="muted mono">
+                Fill settings and save. Mail list opens only after successful connection.
+            </p>
+            <form id="settingsForm" class="settings-grid">
+                <label class="field"><span>Mailbox Email</span><input id="settingsUsername" type="email" required></label>
+                <label class="field"><span>Mailbox Password</span><input id="settingsPassword" type="password" placeholder="Leave empty to keep saved password"></label>
+                <label class="field"><span>From Email (optional)</span><input id="settingsFromEmail" type="email"></label>
+                <label class="field"><span>Default Folder</span><input id="settingsDefaultFolder" value="INBOX" required></label>
+
+                <label class="field"><span>IMAP Host</span><input id="settingsImapHost" required></label>
+                <label class="field"><span>IMAP Port</span><input id="settingsImapPort" type="number" min="1" max="65535" required></label>
+                <label class="switch">
+                    <input id="settingsImapSsl" type="checkbox" checked>
+                    <span>IMAP SSL</span>
+                </label>
+
+                <label class="field"><span>SMTP Host</span><input id="settingsSmtpHost" required></label>
+                <label class="field"><span>SMTP Port</span><input id="settingsSmtpPort" type="number" min="1" max="65535" required></label>
+                <label class="switch">
+                    <input id="settingsSmtpStarttls" type="checkbox">
+                    <span>SMTP STARTTLS</span>
+                </label>
+                <label class="switch">
+                    <input id="settingsSmtpSsl" type="checkbox" checked>
+                    <span>SMTP SSL</span>
+                </label>
+
+                <label class="field"><span>Timeout (seconds)</span><input id="settingsTimeoutSeconds" type="number" min="1" max="300" value="30" required></label>
+
+                <div class="row end">
+                    <button class="btn primary" type="submit">Save & Connect</button>
                 </div>
             </form>
         </section>
