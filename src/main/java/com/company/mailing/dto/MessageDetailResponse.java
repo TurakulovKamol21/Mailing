@@ -5,6 +5,7 @@ import java.util.List;
 
 public record MessageDetailResponse(
         long uid,
+        String folder,
         String messageId,
         String inReplyTo,
         String references,

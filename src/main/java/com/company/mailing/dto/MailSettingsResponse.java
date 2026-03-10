@@ -3,6 +3,7 @@ package com.company.mailing.dto;
 public record MailSettingsResponse(
         boolean configured,
         boolean hasPassword,
+        String provider,
         String imapHost,
         int imapPort,
         boolean imapSsl,

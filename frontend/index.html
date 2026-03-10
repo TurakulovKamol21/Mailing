@@ -47,7 +47,7 @@
             </div>
             <label class="search-wrap" for="searchInput">
                 <span class="search-icon">Search</span>
-                <input id="searchInput" type="search" placeholder="Search mail in current page...">
+                <input id="searchInput" type="search" placeholder="Search current folder...">
             </label>
             <div class="top-actions">
                 <button id="btnMailSettings" class="btn ghost tiny">Mail Settings</button>
@@ -135,8 +135,16 @@
                 Fill settings and save. Mail list opens only after successful connection.
             </p>
             <form id="settingsForm" class="settings-grid">
+                <label class="field">
+                    <span>Provider</span>
+                    <select id="settingsProvider">
+                        <option value="CUSTOM">Custom IMAP / SMTP</option>
+                        <option value="GMAIL_APP_PASSWORD">Gmail (App Password)</option>
+                    </select>
+                </label>
+                <div id="settingsProviderHint" class="settings-provider-hint muted"></div>
                 <label class="field"><span>Mailbox Email</span><input id="settingsUsername" type="email" required></label>
-                <label class="field"><span>Mailbox Password</span><input id="settingsPassword" type="password" placeholder="Leave empty to keep saved password"></label>
+                <label class="field"><span id="settingsPasswordLabel">Mailbox Password</span><input id="settingsPassword" type="password" placeholder="Leave empty to keep saved password"></label>
                 <label class="field"><span>From Email (optional)</span><input id="settingsFromEmail" type="email"></label>
                 <label class="field"><span>Default Folder</span><input id="settingsDefaultFolder" value="INBOX" required></label>
 

@@ -47,6 +47,12 @@ cp .env.example .env
 
 Mailbox username/password endi `.env`da saqlanmaydi. Har bir user o'z mail settingsini UI orqali kiritadi va ular PostgreSQL'da saqlanadi.
 `mailbox_password` DB'da AES-GCM bilan shifrlanadi (`MAIL_SETTINGS_ENCRYPTION_KEY` orqali).
+Settings ichida 2 ta provider bor:
+
+- `Custom IMAP / SMTP`
+- `Gmail (App Password)`
+
+`Gmail (App Password)` tanlansa Gmail host va portlari avtomatik qo'yiladi. Password joyiga oddiy Google password emas, 16 belgili Google App Password kiritiladi.
 
 PostgreSQL'da `mailing` nomli DB yarating (yoki `SPRING_DATASOURCE_URL` ni o'zingizdagi DB nomiga moslang).
 
@@ -145,6 +151,7 @@ curl -X PUT http://localhost:8000/mail/settings \
   -H "Authorization: Bearer ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "provider":"CUSTOM",
     "imapHost":"mail.turon-analitics.uz",
     "imapPort":993,
     "imapSsl":true,
@@ -155,6 +162,29 @@ curl -X PUT http://localhost:8000/mail/settings \
     "username":"support@turon-analitics.uz",
     "password":"your_mailbox_password",
     "fromEmail":"support@turon-analitics.uz",
+    "defaultFolder":"INBOX",
+    "timeoutSeconds":30
+  }'
+```
+
+Gmail App Password uchun namunaviy body:
+
+```bash
+curl -X PUT http://localhost:8000/mail/settings \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider":"GMAIL_APP_PASSWORD",
+    "imapHost":"imap.gmail.com",
+    "imapPort":993,
+    "imapSsl":true,
+    "smtpHost":"smtp.gmail.com",
+    "smtpPort":465,
+    "smtpStarttls":false,
+    "smtpSsl":true,
+    "username":"yourname@gmail.com",
+    "password":"abcd efgh ijkl mnop",
+    "fromEmail":"yourname@gmail.com",
     "defaultFolder":"INBOX",
     "timeoutSeconds":30
   }'

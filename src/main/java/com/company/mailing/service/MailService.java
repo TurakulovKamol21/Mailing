@@ -33,7 +33,14 @@ import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.internet.MimeUtility;
+import jakarta.mail.search.AndTerm;
+import jakarta.mail.search.BodyTerm;
+import jakarta.mail.search.FromStringTerm;
 import jakarta.mail.search.FlagTerm;
+import jakarta.mail.search.OrTerm;
+import jakarta.mail.search.RecipientStringTerm;
+import jakarta.mail.search.SearchTerm;
+import jakarta.mail.search.SubjectTerm;
 import jakarta.mail.util.ByteArrayDataSource;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
@@ -45,9 +52,11 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -58,6 +67,13 @@ import org.springframework.stereotype.Service;
 public class MailService {
 
     private static final Pattern MESSAGE_ID_PATTERN = Pattern.compile("<[^>]+>");
+    private static final String GMAIL_IMAP_HOST = "imap.gmail.com";
+    private static final int GMAIL_IMAP_PORT = 993;
+    private static final boolean GMAIL_IMAP_SSL = true;
+    private static final String GMAIL_SMTP_HOST = "smtp.gmail.com";
+    private static final int GMAIL_SMTP_PORT = 465;
+    private static final boolean GMAIL_SMTP_STARTTLS = false;
+    private static final boolean GMAIL_SMTP_SSL = true;
     private final MailProperties properties;
 
     public MailService(MailProperties properties) {
@@ -111,7 +127,8 @@ public class MailService {
             String folderName,
             int limit,
             int offset,
-            boolean unseenOnly
+            boolean unseenOnly,
+            String query
     ) {
         Store store = null;
         IMAPFolder folder = null;
@@ -121,8 +138,13 @@ public class MailService {
 
             Message[] pageMessages;
             int total;
+            SearchTerm searchTerm = buildMessageListSearchTerm(query, unseenOnly);
 
-            if (unseenOnly) {
+            if (searchTerm != null) {
+                Message[] matchedMessages = folder.search(searchTerm);
+                total = matchedMessages.length;
+                pageMessages = paginateFromNewest(matchedMessages, limit, offset);
+            } else if (unseenOnly) {
                 Message[] unseenMessages = folder.search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
                 total = unseenMessages.length;
                 pageMessages = paginateFromNewest(unseenMessages, limit, offset);
@@ -146,6 +168,47 @@ public class MailService {
         }
     }
 
+    private SearchTerm buildMessageListSearchTerm(String query, boolean unseenOnly) {
+        SearchTerm combined = null;
+        String normalizedQuery = blankToNull(query);
+        if (normalizedQuery != null) {
+            String[] parts = normalizedQuery.split("\\s+");
+            for (String part : parts) {
+                SearchTerm tokenSearch = buildSingleTokenSearchTerm(blankToNull(part));
+                if (tokenSearch == null) {
+                    continue;
+                }
+                combined = combined == null ? tokenSearch : new AndTerm(combined, tokenSearch);
+            }
+        }
+
+        if (unseenOnly) {
+            SearchTerm unreadTerm = new FlagTerm(new Flags(Flags.Flag.SEEN), false);
+            combined = combined == null ? unreadTerm : new AndTerm(unreadTerm, combined);
+        }
+        return combined;
+    }
+
+    private SearchTerm buildSingleTokenSearchTerm(String token) {
+        String normalized = blankToNull(token);
+        if (normalized == null) {
+            return null;
+        }
+        SearchTerm[] terms = new SearchTerm[]{
+                new SubjectTerm(normalized),
+                new FromStringTerm(normalized),
+                new RecipientStringTerm(Message.RecipientType.TO, normalized),
+                new RecipientStringTerm(Message.RecipientType.CC, normalized),
+                new RecipientStringTerm(Message.RecipientType.BCC, normalized),
+                new BodyTerm(normalized)
+        };
+        SearchTerm current = terms[0];
+        for (int i = 1; i < terms.length; i++) {
+            current = new OrTerm(current, terms[i]);
+        }
+        return current;
+    }
+
     public MessageDetailResponse getMessage(MailConnectionSettings settings, long uid, String folderName) {
         Store store = null;
         IMAPFolder folder = null;
@@ -156,7 +219,7 @@ public class MailService {
             if (message == null) {
                 throw new MailServiceException("Message not found: " + uid);
             }
-            return toDetail(folder, message);
+            return toDetail(folder.getFullName(), folder, message);
         } catch (MessagingException | IOException ex) {
             throw new MailServiceException("Could not read message: " + ex.getMessage(), ex);
         } finally {
@@ -167,50 +230,51 @@ public class MailService {
 
     public MessageThreadResponse getThread(MailConnectionSettings settings, long anchorUid, String folderName) {
         Store store = null;
-        IMAPFolder folder = null;
+        Map<String, IMAPFolder> openFolders = new LinkedHashMap<>();
         try {
             store = openStore(settings);
-            folder = openFolder(store, resolveFolder(folderName, settings), Folder.READ_ONLY);
-            Message anchorMessage = folder.getMessageByUID(anchorUid);
+            String anchorFolderName = resolveFolder(folderName, settings);
+            IMAPFolder anchorFolder = openFolder(store, anchorFolderName, Folder.READ_ONLY);
+            openFolders.put(anchorFolder.getFullName(), anchorFolder);
+
+            Message anchorMessage = anchorFolder.getMessageByUID(anchorUid);
             if (anchorMessage == null) {
                 throw new MailServiceException("Message not found: " + anchorUid);
             }
 
-            Message[] allMessages = folder.getMessages();
-            prefetchThreadData(folder, allMessages);
+            List<ThreadCandidate> candidates = new ArrayList<>();
+            for (String candidateFolderName : collectThreadFolderNames(store, anchorFolder.getFullName())) {
+                IMAPFolder candidateFolder = openFolders.get(candidateFolderName);
+                if (candidateFolder == null) {
+                    candidateFolder = openFolder(store, candidateFolderName, Folder.READ_ONLY);
+                    openFolders.put(candidateFolderName, candidateFolder);
+                }
 
-            List<ThreadCandidate> candidates = new ArrayList<>(allMessages.length);
-            for (Message message : allMessages) {
-                candidates.add(toThreadCandidate(folder, message));
-            }
-
-            ThreadCandidate anchor = null;
-            for (ThreadCandidate candidate : candidates) {
-                if (candidate.uid() == anchorUid) {
-                    anchor = candidate;
-                    break;
+                Message[] folderMessages = candidateFolder.getMessages();
+                prefetchThreadData(candidateFolder, folderMessages);
+                for (Message message : folderMessages) {
+                    candidates.add(toThreadCandidate(candidateFolder.getFullName(), candidateFolder, message));
                 }
             }
-            if (anchor == null) {
-                anchor = toThreadCandidate(folder, anchorMessage);
-            }
+
+            ThreadCandidate anchor = toThreadCandidate(anchorFolder.getFullName(), anchorFolder, anchorMessage);
 
             Set<String> seedTokens = new LinkedHashSet<>(anchor.tokens());
-            Set<Long> matchedUids = new LinkedHashSet<>();
-            matchedUids.add(anchorUid);
+            Set<String> matchedCandidateKeys = new LinkedHashSet<>();
+            matchedCandidateKeys.add(anchor.candidateKey());
 
             if (!seedTokens.isEmpty()) {
                 boolean changed;
                 do {
                     changed = false;
                     for (ThreadCandidate candidate : candidates) {
-                        if (matchedUids.contains(candidate.uid())) {
+                        if (matchedCandidateKeys.contains(candidate.candidateKey())) {
                             continue;
                         }
                         if (!hasIntersection(candidate.tokens(), seedTokens)) {
                             continue;
                         }
-                        matchedUids.add(candidate.uid());
+                        matchedCandidateKeys.add(candidate.candidateKey());
                         if (seedTokens.addAll(candidate.tokens())) {
                             changed = true;
                         }
@@ -218,28 +282,40 @@ public class MailService {
                 } while (changed);
             }
 
-            List<ThreadCandidate> matched = candidates.stream()
-                    .filter(candidate -> matchedUids.contains(candidate.uid()))
+            Map<String, ThreadCandidate> uniqueCandidates = new LinkedHashMap<>();
+            for (ThreadCandidate candidate : candidates) {
+                if (!matchedCandidateKeys.contains(candidate.candidateKey())) {
+                    continue;
+                }
+                String identityKey = candidate.identityKey();
+                ThreadCandidate existing = uniqueCandidates.get(identityKey);
+                if (existing == null || isPreferredThreadCandidate(candidate, existing, anchor.folderName())) {
+                    uniqueCandidates.put(identityKey, candidate);
+                }
+            }
+
+            List<ThreadCandidate> matched = uniqueCandidates.values().stream()
                     .sorted(
                             Comparator.comparingLong(ThreadCandidate::sortTimestamp)
-                                    .thenComparingInt(ThreadCandidate::messageNumber)
+                                    .thenComparingInt(candidate -> folderPriority(candidate.folderName(), anchor.folderName()))
+                                    .thenComparingLong(ThreadCandidate::uid)
                     )
                     .toList();
 
             List<MessageDetailResponse> items = new ArrayList<>(matched.size());
             for (ThreadCandidate candidate : matched) {
                 try {
-                    items.add(toDetail(folder, candidate.message()));
+                    items.add(toDetail(candidate.folderName(), candidate.folder(), candidate.message()));
                 } catch (MessagingException | IOException ex) {
                     throw new MailServiceException("Could not read message thread.", ex);
                 }
             }
 
-            return new MessageThreadResponse(anchorUid, folder.getFullName(), items.size(), items);
+            return new MessageThreadResponse(anchorUid, anchor.folderName(), items.size(), items);
         } catch (MessagingException ex) {
             throw new MailServiceException("Could not fetch message thread: " + ex.getMessage(), ex);
         } finally {
-            closeFolder(folder, false);
+            closeFolders(openFolders.values());
             closeStore(store);
         }
     }
@@ -390,13 +466,14 @@ public class MailService {
         );
     }
 
-    private MessageDetailResponse toDetail(IMAPFolder folder, Message message)
+    private MessageDetailResponse toDetail(String folderName, IMAPFolder folder, Message message)
             throws MessagingException, IOException {
         long uid = folder.getUID(message);
         ParsedBody parsedBody = parseBody(message);
 
         return new MessageDetailResponse(
                 uid,
+                folderName,
                 extractSingleHeader(message, "Message-ID"),
                 extractSingleHeader(message, "In-Reply-To"),
                 extractSingleHeader(message, "References"),
@@ -828,16 +905,102 @@ public class MailService {
         folder.fetch(messages, profile);
     }
 
-    private ThreadCandidate toThreadCandidate(IMAPFolder folder, Message message) {
+    private ThreadCandidate toThreadCandidate(String folderName, IMAPFolder folder, Message message) {
         try {
             long uid = folder.getUID(message);
             Set<String> tokens = extractThreadTokens(message);
             Date date = message.getSentDate() != null ? message.getSentDate() : message.getReceivedDate();
             long sortTimestamp = date == null ? Long.MAX_VALUE : date.getTime();
-            return new ThreadCandidate(message, uid, tokens, sortTimestamp, message.getMessageNumber());
+            String normalizedMessageId = normalizeMessageIdentity(extractSingleHeader(message, "Message-ID"));
+            String identityKey = normalizedMessageId != null ? normalizedMessageId : folderName + "::" + uid;
+            return new ThreadCandidate(
+                    message,
+                    folder,
+                    folderName,
+                    uid,
+                    identityKey,
+                    tokens,
+                    sortTimestamp,
+                    message.getMessageNumber()
+            );
         } catch (MessagingException ex) {
             throw new MailServiceException("Could not build thread metadata.", ex);
         }
+    }
+
+    private List<String> collectThreadFolderNames(Store store, String anchorFolderName) throws MessagingException {
+        Set<String> names = new LinkedHashSet<>();
+        names.add(anchorFolderName);
+
+        Folder defaultFolder = store.getDefaultFolder();
+        Folder[] listedFolders = defaultFolder.list("*");
+        for (Folder folder : listedFolders) {
+            if (folder == null) {
+                continue;
+            }
+            String fullName = blankToNull(folder.getFullName());
+            if (fullName == null) {
+                continue;
+            }
+            if ((folder.getType() & Folder.HOLDS_MESSAGES) == 0) {
+                continue;
+            }
+            names.add(fullName);
+        }
+        return List.copyOf(names);
+    }
+
+    private String normalizeMessageIdentity(String value) {
+        Set<String> tokens = parseMessageIdTokens(value);
+        if (!tokens.isEmpty()) {
+            return tokens.iterator().next();
+        }
+        return blankToNull(value == null ? null : value.toLowerCase(Locale.ROOT));
+    }
+
+    private boolean isPreferredThreadCandidate(
+            ThreadCandidate candidate,
+            ThreadCandidate existing,
+            String anchorFolderName
+    ) {
+        int candidatePriority = folderPriority(candidate.folderName(), anchorFolderName);
+        int existingPriority = folderPriority(existing.folderName(), anchorFolderName);
+        if (candidatePriority != existingPriority) {
+            return candidatePriority < existingPriority;
+        }
+        return candidate.uid() < existing.uid();
+    }
+
+    private int folderPriority(String folderName, String anchorFolderName) {
+        if (folderName == null) {
+            return 99;
+        }
+        if (folderName.equalsIgnoreCase(anchorFolderName)) {
+            return 0;
+        }
+        String normalized = folderName.trim().toLowerCase(Locale.ROOT);
+        if (normalized.endsWith("inbox")) {
+            return 1;
+        }
+        if (normalized.contains("sent")) {
+            return 2;
+        }
+        if (normalized.contains("draft")) {
+            return 3;
+        }
+        if (normalized.contains("all mail")) {
+            return 4;
+        }
+        if (normalized.contains("important")) {
+            return 5;
+        }
+        if (normalized.contains("spam")) {
+            return 90;
+        }
+        if (normalized.contains("trash")) {
+            return 91;
+        }
+        return 20;
     }
 
     private Set<String> extractThreadTokens(Message message) throws MessagingException {
@@ -973,6 +1136,15 @@ public class MailService {
         }
     }
 
+    private void closeFolders(Iterable<? extends Folder> folders) {
+        if (folders == null) {
+            return;
+        }
+        for (Folder folder : folders) {
+            closeFolder(folder, false);
+        }
+    }
+
     private void closeStore(Store store) {
         if (store == null) {
             return;
@@ -1050,6 +1222,23 @@ public class MailService {
     }
 
     private MailConnectionSettings fromDefaultSettings(MailCredentials credentials) {
+        String username = credentials.username();
+        if (isGmailAddress(username)) {
+            return new MailConnectionSettings(
+                    GMAIL_IMAP_HOST,
+                    GMAIL_IMAP_PORT,
+                    GMAIL_IMAP_SSL,
+                    GMAIL_SMTP_HOST,
+                    GMAIL_SMTP_PORT,
+                    GMAIL_SMTP_STARTTLS,
+                    GMAIL_SMTP_SSL,
+                    username,
+                    credentials.password().replaceAll("\\s+", ""),
+                    username,
+                    properties.getDefaultFolder(),
+                    properties.getTimeoutSeconds()
+            );
+        }
         return new MailConnectionSettings(
                 properties.getImapHost(),
                 properties.getImapPort(),
@@ -1058,12 +1247,21 @@ public class MailService {
                 properties.getSmtpPort(),
                 properties.isSmtpStarttls(),
                 properties.isSmtpSsl(),
-                credentials.username(),
+                username,
                 credentials.password(),
-                credentials.username(),
+                username,
                 properties.getDefaultFolder(),
                 properties.getTimeoutSeconds()
         );
+    }
+
+    private boolean isGmailAddress(String username) {
+        String value = blankToNull(username);
+        if (value == null) {
+            return false;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        return lower.endsWith("@gmail.com") || lower.endsWith("@googlemail.com");
     }
 
     private record ParsedBody(String textBody, String htmlBody, List<AttachmentInfoResponse> attachments) {
@@ -1071,10 +1269,16 @@ public class MailService {
 
     private record ThreadCandidate(
             Message message,
+            IMAPFolder folder,
+            String folderName,
             long uid,
+            String identityKey,
             Set<String> tokens,
             long sortTimestamp,
             int messageNumber
     ) {
+        private String candidateKey() {
+            return folderName + "::" + uid;
+        }
     }
 }

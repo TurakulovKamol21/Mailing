@@ -3,6 +3,19 @@
     let googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
     let googleScriptPromise = null;
     let authConfigPromise = null;
+    const MAIL_PROVIDERS = {
+        custom: "CUSTOM",
+        gmail: "GMAIL_APP_PASSWORD"
+    };
+    const GMAIL_PRESET = {
+        imapHost: "imap.gmail.com",
+        imapPort: 993,
+        imapSsl: true,
+        smtpHost: "smtp.gmail.com",
+        smtpPort: 465,
+        smtpStarttls: false,
+        smtpSsl: true
+    };
 
     const STORAGE_KEYS = {
         access: "mailing.accessToken",
@@ -16,8 +29,11 @@
         folders: [],
         messages: [],
         searchQuery: "",
+        searchDebounceTimer: null,
         selectedUid: null,
         selectedDetail: null,
+        selectedThread: null,
+        selectedThreadMessageKey: null,
         total: 0,
         offset: 0,
         limit: 10,
@@ -75,8 +91,11 @@
         settingsForm: document.getElementById("settingsForm"),
         btnSettingsClose: document.getElementById("btnSettingsClose"),
         settingsHint: document.getElementById("settingsHint"),
+        settingsProvider: document.getElementById("settingsProvider"),
+        settingsProviderHint: document.getElementById("settingsProviderHint"),
         settingsUsername: document.getElementById("settingsUsername"),
         settingsPassword: document.getElementById("settingsPassword"),
+        settingsPasswordLabel: document.getElementById("settingsPasswordLabel"),
         settingsFromEmail: document.getElementById("settingsFromEmail"),
         settingsDefaultFolder: document.getElementById("settingsDefaultFolder"),
         settingsImapHost: document.getElementById("settingsImapHost"),
@@ -114,8 +133,13 @@
         el.btnReloadFolders.addEventListener("click", () => loadFolders());
         el.btnMailSettings.addEventListener("click", () => openSettingsPanel(false));
         el.searchInput.addEventListener("input", () => {
-            state.searchQuery = (el.searchInput.value || "").trim().toLowerCase();
-            renderMessages();
+            state.searchQuery = (el.searchInput.value || "").trim();
+            state.offset = 0;
+            clearMessageCache();
+            window.clearTimeout(state.searchDebounceTimer);
+            state.searchDebounceTimer = window.setTimeout(() => {
+                loadMessages().catch((err) => showToast(err.message, "error"));
+            }, 220);
         });
         el.unseenOnly.addEventListener("change", () => {
             state.unseenOnly = el.unseenOnly.checked;
@@ -155,6 +179,7 @@
         el.btnBackToList.addEventListener("click", () => setReaderMode(false));
         el.btnSettingsClose.addEventListener("click", closeSettingsPanel);
         el.settingsForm.addEventListener("submit", onSettingsSubmit);
+        el.settingsProvider.addEventListener("change", onSettingsProviderChange);
     }
 
     async function onLoginSubmit(event) {
@@ -331,6 +356,7 @@
     function collectSettingsPayload() {
         const password = trimToNull(el.settingsPassword.value);
         return {
+            provider: normalizeProviderValue(el.settingsProvider.value, el.settingsUsername.value),
             imapHost: trimToNull(el.settingsImapHost.value) || "",
             imapPort: Number.parseInt(el.settingsImapPort.value, 10) || 993,
             imapSsl: el.settingsImapSsl.checked,
@@ -347,6 +373,8 @@
     }
 
     function fillSettingsForm(data) {
+        const provider = normalizeProviderValue(data.provider, data.username, data.imapHost, data.smtpHost);
+        el.settingsProvider.value = provider;
         el.settingsImapHost.value = data.imapHost || "";
         el.settingsImapPort.value = String(data.imapPort || 993);
         el.settingsImapSsl.checked = data.imapSsl !== false;
@@ -359,6 +387,7 @@
         el.settingsDefaultFolder.value = data.defaultFolder || "INBOX";
         el.settingsTimeoutSeconds.value = String(data.timeoutSeconds || 30);
         el.settingsPassword.value = "";
+        applyProviderUi(provider);
     }
 
     function openSettingsPanel(forceRequired) {
@@ -369,6 +398,7 @@
         el.settingsHint.textContent = state.settingsLocked
             ? "Mailbox settings are required before loading messages."
             : "Update settings and save to reconnect.";
+        applyProviderUi(normalizeProviderValue(el.settingsProvider.value, el.settingsUsername.value));
     }
 
     function closeSettingsPanel(force) {
@@ -379,13 +409,58 @@
         el.settingsPanel.classList.add("hidden");
     }
 
+    function onSettingsProviderChange() {
+        const provider = normalizeProviderValue(el.settingsProvider.value, el.settingsUsername.value);
+        el.settingsProvider.value = provider;
+        applyProviderUi(provider);
+    }
+
+    function applyProviderUi(provider) {
+        const gmail = provider === MAIL_PROVIDERS.gmail;
+        if (gmail) {
+            el.settingsImapHost.value = GMAIL_PRESET.imapHost;
+            el.settingsImapPort.value = String(GMAIL_PRESET.imapPort);
+            el.settingsImapSsl.checked = GMAIL_PRESET.imapSsl;
+            el.settingsSmtpHost.value = GMAIL_PRESET.smtpHost;
+            el.settingsSmtpPort.value = String(GMAIL_PRESET.smtpPort);
+            el.settingsSmtpStarttls.checked = GMAIL_PRESET.smtpStarttls;
+            el.settingsSmtpSsl.checked = GMAIL_PRESET.smtpSsl;
+        }
+
+        setServerFieldsDisabled(gmail);
+        el.settingsPasswordLabel.textContent = gmail ? "Google App Password" : "Mailbox Password";
+        el.settingsPassword.placeholder = gmail
+            ? "Enter 16-character Google App Password or leave empty to keep saved value"
+            : "Leave empty to keep saved password";
+        el.settingsProviderHint.textContent = gmail
+            ? "Use your Gmail address and a 16-character Google App Password. Your normal Google password will not work here."
+            : "Use your mailbox server credentials. For corporate mail, enter the IMAP and SMTP settings provided by your admin.";
+    }
+
+    function setServerFieldsDisabled(disabled) {
+        [
+            el.settingsImapHost,
+            el.settingsImapPort,
+            el.settingsImapSsl,
+            el.settingsSmtpHost,
+            el.settingsSmtpPort,
+            el.settingsSmtpStarttls,
+            el.settingsSmtpSsl
+        ].forEach((field) => {
+            field.disabled = disabled;
+        });
+    }
+
     function clearWorkspaceData() {
+        window.clearTimeout(state.searchDebounceTimer);
         state.folders = [];
         state.messages = [];
         state.total = 0;
         state.offset = 0;
         state.selectedUid = null;
         state.selectedDetail = null;
+        state.selectedThread = null;
+        state.selectedThreadMessageKey = null;
         clearMessageCache();
         setReaderMode(false);
         renderDetail(null);
@@ -424,9 +499,11 @@
 
         state.messages = data.messages || [];
         state.total = data.total || 0;
-        if (state.selectedUid && !state.messages.find((item) => item.uid === state.selectedUid)) {
+        if (state.selectedUid && !state.selectedThread && !state.messages.find((item) => item.uid === state.selectedUid)) {
             state.selectedUid = null;
             state.selectedDetail = null;
+            state.selectedThread = null;
+            state.selectedThreadMessageKey = null;
             setReaderMode(false);
             renderDetail(null);
         }
@@ -441,20 +518,24 @@
 
     async function selectMessage(uid) {
         state.selectedUid = uid;
+        state.selectedThreadMessageKey = null;
         renderMessages();
         const q = new URLSearchParams({folder: state.folder});
-        const detail = await requestJson(`/mail/messages/${uid}?${q.toString()}`);
-        state.selectedDetail = detail;
-        renderDetail(detail);
+        const thread = await requestJson(`/mail/messages/${uid}/thread?${q.toString()}`);
+        state.selectedThread = normalizeThreadResponse(thread, uid, state.folder);
+        state.selectedThreadMessageKey = buildThreadMessageRef(state.folder, uid);
+        syncSelectedDetail();
+        renderDetail(state.selectedThread);
         setReaderMode(true);
     }
 
     async function markRead(read) {
-        if (!state.selectedUid) {
+        const selectedMessage = state.selectedDetail;
+        if (!selectedMessage) {
             return;
         }
-        const q = new URLSearchParams({folder: state.folder});
-        await requestJson(`/mail/messages/${state.selectedUid}/read?${q.toString()}`, {
+        const q = new URLSearchParams({folder: resolveMessageFolder(selectedMessage)});
+        await requestJson(`/mail/messages/${selectedMessage.uid}/read?${q.toString()}`, {
             method: "POST",
             body: JSON.stringify({read})
         });
@@ -465,21 +546,24 @@
     }
 
     async function moveMessagePrompt() {
-        if (!state.selectedUid) {
+        const selectedMessage = state.selectedDetail;
+        if (!selectedMessage) {
             return;
         }
         const target = window.prompt("Move selected message to folder:", "INBOX");
         if (!target || !target.trim()) {
             return;
         }
-        const q = new URLSearchParams({folder: state.folder});
-        await requestJson(`/mail/messages/${state.selectedUid}/move?${q.toString()}`, {
+        const q = new URLSearchParams({folder: resolveMessageFolder(selectedMessage)});
+        await requestJson(`/mail/messages/${selectedMessage.uid}/move?${q.toString()}`, {
             method: "POST",
             body: JSON.stringify({targetFolder: target.trim()})
         });
         showToast(`Moved to "${displayFolderName(target.trim())}".`, "success");
         state.selectedUid = null;
         state.selectedDetail = null;
+        state.selectedThread = null;
+        state.selectedThreadMessageKey = null;
         clearMessageCache();
         renderDetail(null);
         setReaderMode(false);
@@ -488,20 +572,23 @@
     }
 
     async function deleteSelectedMessage() {
-        if (!state.selectedUid) {
+        const selectedMessage = state.selectedDetail;
+        if (!selectedMessage) {
             return;
         }
         const confirmed = window.confirm("Delete selected message?");
         if (!confirmed) {
             return;
         }
-        const q = new URLSearchParams({folder: state.folder});
-        await requestJson(`/mail/messages/${state.selectedUid}?${q.toString()}`, {
+        const q = new URLSearchParams({folder: resolveMessageFolder(selectedMessage)});
+        await requestJson(`/mail/messages/${selectedMessage.uid}?${q.toString()}`, {
             method: "DELETE"
         });
         showToast("Message deleted.", "success");
         state.selectedUid = null;
         state.selectedDetail = null;
+        state.selectedThread = null;
+        state.selectedThreadMessageKey = null;
         clearMessageCache();
         renderDetail(null);
         setReaderMode(false);
@@ -640,10 +727,13 @@
     }
 
     function logout(silent) {
+        window.clearTimeout(state.searchDebounceTimer);
         state.accessToken = null;
         state.refreshToken = null;
         state.selectedUid = null;
         state.selectedDetail = null;
+        state.selectedThread = null;
+        state.selectedThreadMessageKey = null;
         state.composeReplyContext = null;
         state.mailSettingsConfigured = false;
         state.settingsLocked = false;
@@ -681,7 +771,12 @@
             ? payload.roles.join(",")
             : (typeof payload.roles === "string" ? payload.roles : "");
         const expiresAt = payload.exp ? new Date(payload.exp * 1000).toLocaleString() : "n/a";
-        el.sessionMeta.textContent = `User: ${username} | Roles: ${roles || "none"} | Exp: ${expiresAt}`;
+        el.sessionMeta.innerHTML = `
+            <span class="session-label">Signed In As</span>
+            <strong class="session-user">${escapeHtml(username)}</strong>
+            <span class="session-line">Roles: ${escapeHtml(roles || "none")}</span>
+            <span class="session-line">Expires: ${escapeHtml(expiresAt)}</span>
+        `;
     }
 
     function renderFolders() {
@@ -694,9 +789,13 @@
             const item = document.createElement("button");
             item.type = "button";
             item.className = `folder-item ${state.folder === folderName ? "active" : ""}`;
+            const label = displayFolderName(folderName);
             item.innerHTML = `
                 <span class="folder-icon">${folderIcon(folderName)}</span>
-                <span>${escapeHtml(displayFolderName(folderName))}</span>
+                <span class="folder-copy">
+                    <span class="folder-name">${escapeHtml(label)}</span>
+                    <span class="folder-path">${escapeHtml(folderName)}</span>
+                </span>
             `;
             item.addEventListener("click", async () => {
                 state.folder = folderName;
@@ -718,7 +817,7 @@
         const visibleMessages = getVisibleMessages();
         const start = state.total === 0 ? 0 : state.offset + 1;
         const end = Math.min(state.offset + state.limit, state.total);
-        const filterSuffix = state.searchQuery ? ` | filtered ${visibleMessages.length}` : "";
+        const filterSuffix = state.searchQuery ? ` | search: ${state.searchQuery}` : "";
         el.messageMeta.textContent = `${start}-${end} of ${state.total} in ${displayFolderName(state.folder)}${filterSuffix}`;
 
         if (!visibleMessages.length) {
@@ -727,14 +826,20 @@
             visibleMessages.forEach((message) => {
                 const item = document.createElement("article");
                 item.className = `message-item ${state.selectedUid === message.uid ? "active" : ""} ${message.seen ? "" : "unread"}`.trim();
+                const snippet = trimToNull(message.snippet) || "No preview available";
+                const subject = trimToNull(message.subject) || "(no subject)";
                 item.innerHTML = `
                     <span class="row-badge" aria-hidden="true"></span>
-                    <div class="row-from">${escapeHtml(message.fromEmail || "unknown")}</div>
-                    <div class="row-content">
-                        <span class="subject">${escapeHtml(message.subject || "(no subject)")}</span>
-                        <span class="snippet"> - ${escapeHtml(message.snippet || "")}</span>
+                    <div class="row-main">
+                        <div class="row-top">
+                            <div class="row-from">${escapeHtml(message.fromEmail || "unknown")}</div>
+                            <div class="row-date">${escapeHtml(formatListDate(message.date))}</div>
+                        </div>
+                        <div class="row-content">
+                            <span class="subject">${escapeHtml(subject)}</span>
+                            <span class="snippet">${escapeHtml(snippet)}</span>
+                        </div>
                     </div>
-                    <div class="row-date">${escapeHtml(formatListDate(message.date))}</div>
                 `;
                 item.addEventListener("click", () => {
                     selectMessage(message.uid).catch((err) => showToast(err.message, "error"));
@@ -746,59 +851,235 @@
         el.btnNextPage.disabled = state.offset + state.limit >= state.total;
     }
 
-    function renderDetail(detail) {
-        const hasSelected = !!detail;
+    function renderDetail(thread) {
+        const selected = getSelectedThreadMessage(thread);
+        const hasSelected = !!selected;
         el.btnMarkRead.disabled = !hasSelected;
         el.btnMarkUnread.disabled = !hasSelected;
-        el.btnReply.disabled = !hasSelected || !trimToNull(detail.fromEmail);
+        el.btnReply.disabled = !hasSelected || !trimToNull(selected.fromEmail);
         el.btnMove.disabled = !hasSelected;
         el.btnDelete.disabled = !hasSelected;
 
-        if (!detail) {
+        if (!thread || !Array.isArray(thread.messages) || !thread.messages.length || !selected) {
             el.detail.className = "detail-empty";
             el.detail.textContent = "Select a message to read.";
             el.btnReply.disabled = true;
             return;
         }
 
-        const bodyPayload = getReadableBodyPayload(detail);
-        const attachments = normalizeAttachments(detail.attachments);
-        const attachmentList = attachments.length
-            ? attachments.map((item) => {
-                const sizeText = item.size == null ? "" : ` <span class="mono muted">(${escapeHtml(formatBytes(item.size))})</span>`;
-                return `
-                    <li class="attachment-item">
-                        <span class="attachment-name">${escapeHtml(item.filename)}${sizeText}</span>
-                        <span class="attachment-actions">
-                            <button type="button" class="btn tiny ghost" data-attachment-open="${item.index}">Open</button>
-                            <button type="button" class="btn tiny ghost" data-attachment-download="${item.index}">Download</button>
-                        </span>
-                    </li>
-                `;
-            }).join("")
-            : "<li>none</li>";
+        const messages = thread.messages;
+        const threadItems = messages.map((message) => {
+            const active = threadMessageKey(message) === threadMessageKey(selected);
+            const preview = escapeHtml(buildThreadPreview(message));
+            const toLineRaw = Array.isArray(message.to) ? message.to.join(", ") : "";
+            const toLine = escapeHtml(toLineRaw || "-");
+            const attachmentItems = normalizeAttachments(message.attachments);
+            const attachmentCount = attachmentItems.length;
+            const bodyPayload = active ? getReadableBodyPayload(message) : null;
+            const attachmentList = attachmentItems.length
+                ? `
+                    <div class="thread-attachments">
+                        <div class="thread-attachments-head">
+                            <strong>Attachments</strong>
+                            <span class="detail-block-note">${attachmentItems.length} file${attachmentItems.length === 1 ? "" : "s"}</span>
+                        </div>
+                        <ul class="attachment-list">${attachmentItems.map((item) => {
+                            const sizeText = item.size == null ? "" : ` <span class="mono muted">(${escapeHtml(formatBytes(item.size))})</span>`;
+                            return `
+                                <li class="attachment-item">
+                                    <span class="attachment-name">${escapeHtml(item.filename)}${sizeText}</span>
+                                    <span class="attachment-actions">
+                                        <button type="button" class="btn tiny ghost" data-attachment-open="${buildAttachmentRef(message, item.index)}">Open</button>
+                                        <button type="button" class="btn tiny ghost" data-attachment-download="${buildAttachmentRef(message, item.index)}">Download</button>
+                                    </span>
+                                </li>
+                            `;
+                        }).join("")}</ul>
+                    </div>
+                `
+                : "";
+            return `
+                <article class="thread-message ${active ? "active" : ""}" data-thread-select="${buildThreadMessageRef(resolveMessageFolder(message), message.uid)}">
+                    <div class="thread-message-shell">
+                        <div class="thread-avatar" aria-hidden="true">${escapeHtml(buildAvatarLabel(message.fromEmail || "unknown"))}</div>
+                        <div class="thread-message-content">
+                            <div class="thread-message-head">
+                                <div class="thread-head-main">
+                                    <div class="thread-author-row">
+                                        <div class="thread-author">${escapeHtml(message.fromEmail || "unknown")}</div>
+                                        ${!message.seen ? '<span class="thread-pill unread">Unread</span>' : ""}
+                                    </div>
+                                    <div class="thread-recipient">to ${toLine}</div>
+                                </div>
+                                <div class="thread-head-side">
+                                    ${attachmentCount ? `<span class="thread-pill">${attachmentCount} file${attachmentCount === 1 ? "" : "s"}</span>` : ""}
+                                    <span class="thread-date">${escapeHtml(formatDate(message.date))}</span>
+                                </div>
+                            </div>
+                            ${active ? `
+                                <div class="thread-message-expanded">
+                                    <div class="thread-meta-inline">
+                                        <span><strong>From:</strong> ${escapeHtml(message.fromEmail || "-")}</span>
+                                        <span><strong>To:</strong> ${toLine}</span>
+                                        <span><strong>Date:</strong> ${escapeHtml(formatDate(message.date))}</span>
+                                    </div>
+                                    <div class="thread-message-body">
+                                        <div class="thread-body-head">
+                                            <strong>Message</strong>
+                                            <span class="detail-block-note">${bodyPayload.type === "html" ? "Rendered HTML" : "Plain text"}</span>
+                                        </div>
+                                        <div class="mail-body-host" data-message-body-host="${buildThreadMessageRef(resolveMessageFolder(message), message.uid)}"></div>
+                                    </div>
+                                    ${attachmentList}
+                                </div>
+                            ` : `
+                                <div class="thread-preview">${preview}</div>
+                            `}
+                        </div>
+                    </div>
+                </article>
+            `;
+        }).join("");
 
         el.detail.className = "detail";
         el.detail.innerHTML = `
-            <div>
-                <h4>${escapeHtml(detail.subject || "(no subject)")}</h4>
-                <div class="mono muted">UID: ${detail.uid} | ${detail.seen ? "read" : "unread"}</div>
+            <div class="detail-hero">
+                <div class="detail-status mono">${selected.seen ? "Read" : "Unread"} · UID ${selected.uid}</div>
+                <h4>${escapeHtml(selected.subject || "(no subject)")}</h4>
+                <div class="thread-summary">
+                    <span class="thread-summary-badge">Conversation</span>
+                    <span class="thread-summary-copy">${messages.length} message${messages.length === 1 ? "" : "s"} in this thread</span>
+                </div>
             </div>
-            <div class="detail-block">
-                <div><strong>From:</strong> ${escapeHtml(detail.fromEmail || "")}</div>
-                <div><strong>To:</strong> ${escapeHtml((detail.to || []).join(", "))}</div>
-                <div><strong>Date:</strong> ${escapeHtml(formatDate(detail.date))}</div>
-            </div>
-            <div class="detail-block">
-                <strong>Message</strong>
-                <div id="messageBodyHost" class="mail-body-host"></div>
-            </div>
-            <div class="detail-block">
-                <strong>Attachments</strong>
-                <ul>${attachmentList}</ul>
-            </div>
+            <div class="thread-stack">${threadItems}</div>
         `;
-        renderMessageBody(bodyPayload);
+        renderMessageBody(getReadableBodyPayload(selected), threadMessageKey(selected));
+    }
+
+    function normalizeThreadResponse(thread, anchorUid, folder) {
+        const resolvedFolder = trimToNull(thread && thread.folder) || folder;
+        const messages = Array.isArray(thread && thread.messages)
+            ? thread.messages.map((message) => ({
+                ...message,
+                folder: trimToNull(message && message.folder) || resolvedFolder
+            }))
+            : [];
+        return {
+            anchorUid,
+            folder: resolvedFolder,
+            total: typeof thread?.total === "number" ? thread.total : messages.length,
+            messages
+        };
+    }
+
+    function syncSelectedDetail() {
+        const selected = getSelectedThreadMessage(state.selectedThread);
+        if (selected) {
+            state.selectedDetail = selected;
+            state.selectedThreadMessageKey = threadMessageKey(selected);
+            return;
+        }
+        const fallback = state.selectedThread && Array.isArray(state.selectedThread.messages)
+            ? state.selectedThread.messages[state.selectedThread.messages.length - 1] || null
+            : null;
+        state.selectedDetail = fallback;
+        state.selectedThreadMessageKey = fallback ? threadMessageKey(fallback) : null;
+    }
+
+    function getSelectedThreadMessage(thread) {
+        if (!thread || !Array.isArray(thread.messages) || !thread.messages.length) {
+            return null;
+        }
+        return getThreadMessageByKey(thread, state.selectedThreadMessageKey)
+            || getThreadMessageByFolderAndUid(thread, state.folder, state.selectedUid)
+            || thread.messages[thread.messages.length - 1]
+            || null;
+    }
+
+    function getThreadMessageByUid(thread, uid) {
+        if (!thread || !Array.isArray(thread.messages) || !uid) {
+            return null;
+        }
+        return thread.messages.find((message) => message.uid === uid) || null;
+    }
+
+    function getThreadMessageByFolderAndUid(thread, folder, uid) {
+        if (!thread || !Array.isArray(thread.messages) || !uid) {
+            return null;
+        }
+        const expectedFolder = trimToNull(folder);
+        return thread.messages.find((message) => {
+            if (message.uid !== uid) {
+                return false;
+            }
+            return !expectedFolder || resolveMessageFolder(message) === expectedFolder;
+        }) || null;
+    }
+
+    function getThreadMessageByKey(thread, key) {
+        const ref = parseThreadMessageRef(key);
+        if (!ref) {
+            return null;
+        }
+        return getThreadMessageByFolderAndUid(thread, ref.folder, ref.uid);
+    }
+
+    function buildThreadPreview(detail) {
+        const textBody = trimToNull(detail && detail.textBody);
+        if (textBody) {
+            return textBody.replace(/\s+/g, " ").trim();
+        }
+        const htmlBody = trimToNull(detail && detail.htmlBody);
+        if (htmlBody) {
+            return stripHtml(htmlBody).replace(/\s+/g, " ").trim();
+        }
+        return "Open this message to read the full content.";
+    }
+
+    function buildAvatarLabel(value) {
+        const source = trimToNull(value) || "?";
+        const mailbox = source.split("@")[0] || source;
+        const compact = mailbox.replace(/[^a-zA-Z0-9]+/g, " ").trim();
+        const tokens = compact.split(/\s+/).filter(Boolean);
+        if (tokens.length >= 2) {
+            return `${tokens[0][0]}${tokens[1][0]}`.toUpperCase();
+        }
+        return mailbox.slice(0, 2).toUpperCase();
+    }
+
+    function resolveMessageFolder(message) {
+        return trimToNull(message && message.folder)
+            || trimToNull(state.selectedThread && state.selectedThread.folder)
+            || state.folder;
+    }
+
+    function buildThreadMessageRef(folder, uid) {
+        return `${encodeURIComponent(folder || state.folder)}::${uid}`;
+    }
+
+    function threadMessageKey(message) {
+        if (!message) {
+            return null;
+        }
+        return buildThreadMessageRef(resolveMessageFolder(message), message.uid);
+    }
+
+    function parseThreadMessageRef(value) {
+        const text = trimToNull(value);
+        if (!text || !text.includes("::")) {
+            return null;
+        }
+        const [folderText, uidText] = text.split("::", 2);
+        const folder = decodeURIComponent(folderText);
+        const uid = Number.parseInt(uidText, 10);
+        if (!folder || !Number.isInteger(uid)) {
+            return null;
+        }
+        return {folder, uid};
+    }
+
+    function buildAttachmentRef(message, index) {
+        return `${encodeURIComponent(resolveMessageFolder(message))}::${message.uid}::${index}`;
     }
 
     function setReaderMode(enabled) {
@@ -807,8 +1088,10 @@
         el.detailCard.classList.toggle("hidden", !state.readerMode);
     }
 
-    function renderMessageBody(bodyPayload) {
-        const host = document.getElementById("messageBodyHost");
+    function renderMessageBody(bodyPayload, messageRef) {
+        const host = messageRef
+            ? document.querySelector(`[data-message-body-host="${CSS.escape(String(messageRef))}"]`)
+            : document.querySelector("[data-message-body-host]");
         if (!host) {
             return;
         }
@@ -984,25 +1267,41 @@
     async function onDetailActionClick(event) {
         const openButton = event.target.closest("[data-attachment-open]");
         if (openButton) {
-            const index = Number.parseInt(openButton.getAttribute("data-attachment-open"), 10);
-            if (Number.isInteger(index)) {
-                await openAttachment(index);
+            const attachmentRef = parseAttachmentReference(openButton.getAttribute("data-attachment-open"));
+            if (attachmentRef) {
+                await openAttachment(attachmentRef.uid, attachmentRef.index, attachmentRef.folder);
             }
             return;
         }
 
         const downloadButton = event.target.closest("[data-attachment-download]");
         if (downloadButton) {
-            const index = Number.parseInt(downloadButton.getAttribute("data-attachment-download"), 10);
-            if (Number.isInteger(index)) {
-                await downloadAttachment(index);
+            const attachmentRef = parseAttachmentReference(downloadButton.getAttribute("data-attachment-download"));
+            if (attachmentRef) {
+                await downloadAttachment(attachmentRef.uid, attachmentRef.index, attachmentRef.folder);
+            }
+            return;
+        }
+
+        const threadCard = event.target.closest("[data-thread-select]");
+        if (threadCard) {
+            const ref = parseThreadMessageRef(threadCard.getAttribute("data-thread-select"));
+            if (ref) {
+                const nextKey = buildThreadMessageRef(ref.folder, ref.uid);
+                if (nextKey === state.selectedThreadMessageKey) {
+                    return;
+                }
+                state.selectedThreadMessageKey = nextKey;
+                syncSelectedDetail();
+                renderMessages();
+                renderDetail(state.selectedThread);
             }
         }
     }
 
-    async function openAttachment(index) {
+    async function openAttachment(messageUid, index, folderName) {
         try {
-            const {blob, filename} = await fetchAttachment(index);
+            const {blob, filename} = await fetchAttachment(messageUid, index, folderName);
             const objectUrl = URL.createObjectURL(blob);
             const popup = window.open(objectUrl, "_blank", "noopener,noreferrer");
             if (!popup) {
@@ -1014,9 +1313,9 @@
         }
     }
 
-    async function downloadAttachment(index) {
+    async function downloadAttachment(messageUid, index, folderName) {
         try {
-            const {blob, filename} = await fetchAttachment(index);
+            const {blob, filename} = await fetchAttachment(messageUid, index, folderName);
             const objectUrl = URL.createObjectURL(blob);
             triggerDownload(objectUrl, filename);
             window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
@@ -1025,12 +1324,12 @@
         }
     }
 
-    async function fetchAttachment(index) {
-        if (!state.selectedUid) {
+    async function fetchAttachment(messageUid, index, folderName) {
+        if (!messageUid) {
             throw new Error("Select a message first.");
         }
-        const q = new URLSearchParams({folder: state.folder});
-        const response = await apiFetch(`/mail/messages/${state.selectedUid}/attachments/${index}?${q.toString()}`, {
+        const q = new URLSearchParams({folder: folderName || state.folder});
+        const response = await apiFetch(`/mail/messages/${messageUid}/attachments/${index}?${q.toString()}`, {
             method: "GET"
         });
         if (!response.ok) {
@@ -1042,15 +1341,32 @@
         }
         const blob = await response.blob();
         const filename = extractFilenameFromDisposition(response.headers.get("content-disposition"))
-            || findAttachmentFilename(index)
+            || findAttachmentFilename(messageUid, index, folderName)
             || `attachment-${index + 1}`;
         return {blob, filename};
     }
 
-    function findAttachmentFilename(index) {
-        const attachments = normalizeAttachments(state.selectedDetail ? state.selectedDetail.attachments : []);
+    function findAttachmentFilename(messageUid, index, folderName) {
+        const message = getThreadMessageByFolderAndUid(state.selectedThread, folderName, messageUid)
+            || getThreadMessageByUid(state.selectedThread, messageUid);
+        const attachments = normalizeAttachments(message ? message.attachments : []);
         const matched = attachments.find((item) => item.index === index);
         return matched ? matched.filename : null;
+    }
+
+    function parseAttachmentReference(value) {
+        const text = trimToNull(value);
+        if (!text) {
+            return null;
+        }
+        const [folderText, uidText, indexText] = text.split("::");
+        const folder = decodeURIComponent(folderText || "");
+        const uid = Number.parseInt(uidText, 10);
+        const index = Number.parseInt(indexText, 10);
+        if (!folder || !Number.isInteger(uid) || !Number.isInteger(index) || index < 0) {
+            return null;
+        }
+        return {folder, uid, index};
     }
 
     function triggerDownload(objectUrl, filename) {
@@ -1116,17 +1432,7 @@
     }
 
     function getVisibleMessages() {
-        if (!state.searchQuery) {
-            return state.messages;
-        }
-        return state.messages.filter((message) => {
-            const bucket = [
-                message.subject,
-                message.snippet,
-                message.fromEmail
-            ].join(" ").toLowerCase();
-            return bucket.includes(state.searchQuery);
-        });
+        return state.messages;
     }
 
     async function getMessagePage(offset) {
@@ -1156,6 +1462,9 @@
             offset: String(chunkOffset),
             unseenOnly: String(state.unseenOnly)
         });
+        if (state.searchQuery) {
+            q.set("query", state.searchQuery);
+        }
         const data = await requestJson(`/mail/messages?${q.toString()}`);
         const normalized = {
             total: data.total || 0,
@@ -1166,7 +1475,7 @@
     }
 
     function messageChunkKey(chunkOffset) {
-        return `${state.folder}|${state.unseenOnly}|${state.backendChunkSize}|${chunkOffset}`;
+        return `${state.folder}|${state.unseenOnly}|${state.backendChunkSize}|${chunkOffset}|${state.searchQuery}`;
     }
 
     function toApiUrl(url) {
@@ -1219,6 +1528,22 @@
     function trimToNull(value) {
         const text = (value || "").trim();
         return text ? text : null;
+    }
+
+    function normalizeProviderValue(provider, username, imapHost, smtpHost) {
+        const normalizedProvider = trimToNull(provider);
+        if (normalizedProvider && normalizedProvider.toUpperCase() === MAIL_PROVIDERS.gmail) {
+            return MAIL_PROVIDERS.gmail;
+        }
+        const email = (trimToNull(username) || "").toLowerCase();
+        const imap = (trimToNull(imapHost) || "").toLowerCase();
+        const smtp = (trimToNull(smtpHost) || "").toLowerCase();
+        if ((email.endsWith("@gmail.com") || email.endsWith("@googlemail.com"))
+            && imap === GMAIL_PRESET.imapHost
+            && smtp === GMAIL_PRESET.smtpHost) {
+            return MAIL_PROVIDERS.gmail;
+        }
+        return MAIL_PROVIDERS.custom;
     }
 
     function formatBytes(value) {

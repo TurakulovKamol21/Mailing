@@ -84,9 +84,10 @@ public class MailController {
             @RequestParam(defaultValue = "20") @Min(1) @Max(200) int limit,
             @RequestParam(defaultValue = "0") @Min(0) int offset,
             @RequestParam(defaultValue = "false") boolean unseenOnly,
+            @RequestParam(required = false) String query,
             @AuthenticationPrincipal JwtPrincipal principal
     ) {
-        return mailService.listMessages(resolveSettings(principal), folder, limit, offset, unseenOnly);
+        return mailService.listMessages(resolveSettings(principal), folder, limit, offset, unseenOnly, query);
     }
 
     @GetMapping("/messages/{uid}")

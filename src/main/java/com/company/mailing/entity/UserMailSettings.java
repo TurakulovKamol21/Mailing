@@ -24,6 +24,9 @@ public class UserMailSettings {
     @Column(name = "owner_user_id", nullable = false, unique = true)
     private UUID ownerUserId;
 
+    @Column(name = "provider", length = 64)
+    private String provider;
+
     @Column(name = "imap_host", nullable = false, length = 255)
     private String imapHost;
 
@@ -77,6 +80,14 @@ public class UserMailSettings {
 
     public void setOwnerUserId(UUID ownerUserId) {
         this.ownerUserId = ownerUserId;
+    }
+
+    public String getProvider() {
+        return provider;
+    }
+
+    public void setProvider(String provider) {
+        this.provider = provider;
     }
 
     public String getImapHost() {

@@ -7,8 +7,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script type="module" crossorigin src="/assets/index-ULo5lzJl.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-BqJ-MddI.css">
+  <script type="module" crossorigin src="/assets/index-BOOLoIqw.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Dz7efmrI.css">
 </head>
 <body>
 <div id="globalLoader" class="global-loader hidden" aria-live="polite" aria-busy="true">
@@ -48,7 +48,7 @@
             </div>
             <label class="search-wrap" for="searchInput">
                 <span class="search-icon">Search</span>
-                <input id="searchInput" type="search" placeholder="Search mail in current page...">
+                <input id="searchInput" type="search" placeholder="Search current folder...">
             </label>
             <div class="top-actions">
                 <button id="btnMailSettings" class="btn ghost tiny">Mail Settings</button>
@@ -136,8 +136,16 @@
                 Fill settings and save. Mail list opens only after successful connection.
             </p>
             <form id="settingsForm" class="settings-grid">
+                <label class="field">
+                    <span>Provider</span>
+                    <select id="settingsProvider">
+                        <option value="CUSTOM">Custom IMAP / SMTP</option>
+                        <option value="GMAIL_APP_PASSWORD">Gmail (App Password)</option>
+                    </select>
+                </label>
+                <div id="settingsProviderHint" class="settings-provider-hint muted"></div>
                 <label class="field"><span>Mailbox Email</span><input id="settingsUsername" type="email" required></label>
-                <label class="field"><span>Mailbox Password</span><input id="settingsPassword" type="password" placeholder="Leave empty to keep saved password"></label>
+                <label class="field"><span id="settingsPasswordLabel">Mailbox Password</span><input id="settingsPassword" type="password" placeholder="Leave empty to keep saved password"></label>
                 <label class="field"><span>From Email (optional)</span><input id="settingsFromEmail" type="email"></label>
                 <label class="field"><span>Default Folder</span><input id="settingsDefaultFolder" value="INBOX" required></label>
 

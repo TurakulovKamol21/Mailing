@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 
 public record MailSettingsRequest(
+        String provider,
         @NotBlank String imapHost,
         @Min(1) @Max(65535) int imapPort,
         boolean imapSsl,

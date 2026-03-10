@@ -18,6 +18,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class UserMailSettingsService {
 
+    public static final String PROVIDER_CUSTOM = "CUSTOM";
+    public static final String PROVIDER_GMAIL_APP_PASSWORD = "GMAIL_APP_PASSWORD";
+    private static final String GMAIL_IMAP_HOST = "imap.gmail.com";
+    private static final int GMAIL_IMAP_PORT = 993;
+    private static final boolean GMAIL_IMAP_SSL = true;
+    private static final String GMAIL_SMTP_HOST = "smtp.gmail.com";
+    private static final int GMAIL_SMTP_PORT = 465;
+    private static final boolean GMAIL_SMTP_STARTTLS = false;
+    private static final boolean GMAIL_SMTP_SSL = true;
+
     private final MailProperties defaults;
     private final UserMailSettingsRepository repository;
     private final MailPasswordCryptoService passwordCryptoService;
@@ -36,37 +46,49 @@ public class UserMailSettingsService {
         UserMailSettings stored = repository.findByOwnerUserId(requireUserId(principal)).orElse(null);
         if (stored == null) {
             MailConnectionSettings fallback = defaultsFor(principal);
-            return toResponse(false, false, fallback);
+            return toResponse(false, false, inferProvider(fallback), fallback);
         }
-        return toResponse(true, hasPassword(stored), toSettings(stored));
+        MailConnectionSettings settings = toSettings(stored);
+        String provider = normalizeNullable(stored.getProvider()) == null
+                ? inferProvider(settings)
+                : normalizeProvider(stored.getProvider(), stored.getMailboxUsername());
+        return toResponse(true, hasPassword(stored), provider, settings);
     }
 
     public MailConnectionSettings buildForSave(JwtPrincipal principal, MailSettingsRequest request) {
         UserMailSettings existing = repository.findByOwnerUserId(requireUserId(principal)).orElse(null);
+        String username = normalizeRequired(request.username(), "Mailbox username is required.");
+        String provider = normalizeProvider(request.provider(), username);
 
         String password = normalizeNullable(request.password());
         if (password == null && existing != null) {
             password = normalizeNullable(passwordCryptoService.decrypt(existing.getMailboxPassword()));
         }
+        if (isGmailProvider(provider)) {
+            password = normalizeGmailAppPassword(password);
+        }
         if (password == null || password.isBlank()) {
             throw new MailServiceException("Password is required.");
         }
-
-        String username = normalizeRequired(request.username(), "Mailbox username is required.");
 
         String imapHost = normalizeRequired(request.imapHost(), "IMAP host is required.");
         String smtpHost = normalizeRequired(request.smtpHost(), "SMTP host is required.");
         String defaultFolder = normalizeNullable(request.defaultFolder());
         String fromEmail = normalizeNullable(request.fromEmail());
 
+        if (isGmailProvider(provider)) {
+            imapHost = GMAIL_IMAP_HOST;
+            smtpHost = GMAIL_SMTP_HOST;
+        }
+
         return new MailConnectionSettings(
                 imapHost,
-                request.imapPort(),
-                request.imapSsl(),
+                isGmailProvider(provider) ? GMAIL_IMAP_PORT : request.imapPort(),
+                isGmailProvider(provider) ? GMAIL_IMAP_SSL : request.imapSsl(),
                 smtpHost,
-                request.smtpPort(),
-                request.smtpStarttls(),
-                request.smtpSsl(),
+                isGmailProvider(provider) ? GMAIL_SMTP_PORT : request.smtpPort(),
+                isGmailProvider(provider) ? GMAIL_SMTP_STARTTLS : request.smtpStarttls(),
+                isGmailProvider(provider) ? GMAIL_SMTP_SSL : request.smtpSsl(),
                 username.toLowerCase(Locale.ROOT),
                 password,
                 fromEmail,
@@ -80,6 +102,7 @@ public class UserMailSettingsService {
         UUID ownerUserId = requireUserId(principal);
         UserMailSettings entity = repository.findByOwnerUserId(ownerUserId).orElseGet(UserMailSettings::new);
         entity.setOwnerUserId(ownerUserId);
+        entity.setProvider(inferProvider(settings));
         entity.setImapHost(settings.imapHost());
         entity.setImapPort(settings.imapPort());
         entity.setImapSsl(settings.imapSsl());
@@ -93,7 +116,7 @@ public class UserMailSettingsService {
         entity.setDefaultFolder(settings.resolveDefaultFolder());
         entity.setTimeoutSeconds(settings.timeoutSeconds());
         repository.save(entity);
-        return toResponse(true, hasPassword(entity), settings);
+        return toResponse(true, hasPassword(entity), inferProvider(settings), settings);
     }
 
     public MailConnectionSettings requireSettings(JwtPrincipal principal) {
@@ -104,10 +127,16 @@ public class UserMailSettingsService {
                                 "Mailbox settings not configured. Open settings and save connection."));
     }
 
-    private MailSettingsResponse toResponse(boolean configured, boolean hasPassword, MailConnectionSettings settings) {
+    private MailSettingsResponse toResponse(
+            boolean configured,
+            boolean hasPassword,
+            String provider,
+            MailConnectionSettings settings
+    ) {
         return new MailSettingsResponse(
                 configured,
                 hasPassword,
+                provider,
                 settings.imapHost(),
                 settings.imapPort(),
                 settings.imapSsl(),
@@ -146,6 +175,23 @@ public class UserMailSettingsService {
     private MailConnectionSettings defaultsFor(JwtPrincipal principal) {
         String username = principal != null && principal.username() != null ? principal.username().trim() : "";
         String defaultFolder = normalizeNullable(defaults.getDefaultFolder());
+        String provider = normalizeProvider(null, username);
+        if (isGmailProvider(provider)) {
+            return new MailConnectionSettings(
+                    GMAIL_IMAP_HOST,
+                    GMAIL_IMAP_PORT,
+                    GMAIL_IMAP_SSL,
+                    GMAIL_SMTP_HOST,
+                    GMAIL_SMTP_PORT,
+                    GMAIL_SMTP_STARTTLS,
+                    GMAIL_SMTP_SSL,
+                    username,
+                    "",
+                    username,
+                    defaultFolder == null ? "INBOX" : defaultFolder,
+                    defaults.getTimeoutSeconds() > 0 ? defaults.getTimeoutSeconds() : 30
+            );
+        }
         return new MailConnectionSettings(
                 normalizeNullable(defaults.getImapHost()),
                 defaults.getImapPort() > 0 ? defaults.getImapPort() : 993,
@@ -186,5 +232,52 @@ public class UserMailSettingsService {
         }
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private String normalizeProvider(String provider, String username) {
+        String normalized = normalizeNullable(provider);
+        if (normalized == null) {
+            return isGmailAddress(username) ? PROVIDER_GMAIL_APP_PASSWORD : PROVIDER_CUSTOM;
+        }
+        String upper = normalized.toUpperCase(Locale.ROOT);
+        if (PROVIDER_GMAIL_APP_PASSWORD.equals(upper)) {
+            return PROVIDER_GMAIL_APP_PASSWORD;
+        }
+        return PROVIDER_CUSTOM;
+    }
+
+    private boolean isGmailProvider(String provider) {
+        return PROVIDER_GMAIL_APP_PASSWORD.equals(provider);
+    }
+
+    private boolean isGmailAddress(String username) {
+        String normalized = normalizeNullable(username);
+        if (normalized == null) {
+            return false;
+        }
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        return lower.endsWith("@gmail.com") || lower.endsWith("@googlemail.com");
+    }
+
+    private String normalizeGmailAppPassword(String password) {
+        String normalized = normalizeNullable(password);
+        if (normalized == null) {
+            return null;
+        }
+        return normalized.replaceAll("\\s+", "");
+    }
+
+    private String inferProvider(MailConnectionSettings settings) {
+        if (settings == null) {
+            return PROVIDER_CUSTOM;
+        }
+        boolean gmailHosts = GMAIL_IMAP_HOST.equalsIgnoreCase(normalizeNullable(settings.imapHost()))
+                && GMAIL_SMTP_HOST.equalsIgnoreCase(normalizeNullable(settings.smtpHost()))
+                && settings.imapPort() == GMAIL_IMAP_PORT
+                && settings.smtpPort() == GMAIL_SMTP_PORT;
+        if (gmailHosts && isGmailAddress(settings.username())) {
+            return PROVIDER_GMAIL_APP_PASSWORD;
+        }
+        return PROVIDER_CUSTOM;
     }
 }
